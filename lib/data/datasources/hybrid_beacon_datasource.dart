@@ -45,10 +45,10 @@ class HybridBeaconDataSource implements BeaconDataSource {
   BluetoothAdapterState _adapterState = BluetoothAdapterState.unknown;
   bool _initialized = false;
 
-  // Beacon A: ...96E0 is physically at Reception (SWAPPED)
-  static const String beaconAUuid = 'E2C56DB5-DFFB-48D2-B060-D0F5A71096E0';
-  // Beacon B: ...96E1 is physically at X-Ray (SWAPPED)
-  static const String beaconBUuid = 'E2C56DB5-DFFB-48D2-B060-D0F5A71096E1';
+  // Beacon A: ...96E1 is physically at Reception
+  static const String beaconAUuid = 'E2C56DB5-DFFB-48D2-B060-D0F5A71096E1';
+  // Beacon B: ...96E0 is physically at X-Ray
+  static const String beaconBUuid = 'E2C56DB5-DFFB-48D2-B060-D0F5A71096E0';
 
   static const BeaconNode beaconANode = BeaconNode(
     uid: 'beacon_reception',
@@ -57,7 +57,7 @@ class HybridBeaconDataSource implements BeaconDataSource {
     y: 460,
     floor: 1,
     departmentId: 'reception',
-    connectedNodes: ['beacon_entrance', 'beacon_corridor_1_1'],
+    connectedNodes: ['beacon_corridor_1_center'],
   );
 
   static const BeaconNode beaconBNode = BeaconNode(
@@ -67,7 +67,7 @@ class HybridBeaconDataSource implements BeaconDataSource {
     y: 220,
     floor: 1,
     departmentId: 'xray',
-    connectedNodes: ['beacon_radiology', 'beacon_corridor_1_1'],
+    connectedNodes: ['beacon_xray_door'],
   );
 
   int? _beaconARssi;
@@ -75,14 +75,36 @@ class HybridBeaconDataSource implements BeaconDataSource {
   DateTime? _lastBeaconATime;
   DateTime? _lastBeaconBTime;
   
+  // RSSI Kalman filter state for each beacon
+  double? _kalmanARssi;
+  double? _kalmanBRssi;
+  double _kalmanAVariance = 1.0;
+  double _kalmanBVariance = 1.0;
+  static const double _kalmanProcessNoise = 0.003;  // Lower = smoother but slower response
+  static const double _kalmanMeasurementNoise = 4.0;  // Higher = trusts history more
+  
+  // RSSI buffers for outlier detection
+  final List<int> _rssiABuffer = [];
+  final List<int> _rssiBBuffer = [];
+  static const int _rssiBufferSize = 7;  // More samples for better outlier detection
+  
   // Distance smoothing with median filter (production-ready)
   final List<double> _distanceABuffer = [];
   final List<double> _distanceBBuffer = [];
-  static const int _distanceBufferSize = 15;  // MAXIMUM smoothing - odd number for median
+  static const int _distanceBufferSize = 12;  // More samples = more stable
+  
+  // Position smoothing with exponential moving average
+  double? _smoothedX;
+  double? _smoothedY;
+  static const double _positionSmoothingFactor = 0.15;  // 0.1=very smooth, 0.5=responsive
+  
+  // Confidence tracking based on signal quality
+  double _confidenceA = 0.0;
+  double _confidenceB = 0.0;
   
   // Hysteresis for anti-flicker (AGGRESSIVE settings)
   static const double _switchThreshold = 2.5;  // 2.5m minimum difference to switch beacons
-  static const int _confirmationCycles = 5;  // 5 consecutive cycles needed (2.5 seconds)
+  static const int _confirmationCycles = 6;  // 6 consecutive cycles needed (~2.5 seconds)
   String? _currentNearestBeacon;  // 'A', 'B', or 'MIDDLE'
   String? _pendingNearestBeacon;
   int _pendingConfirmationCount = 0;
@@ -90,19 +112,120 @@ class HybridBeaconDataSource implements BeaconDataSource {
   Timer? _updateTimer;
   Timer? _fallbackTimer;
   BeaconNode? _currentInterpolatedPosition;
+  
+  // Active navigation route for snap-to-route feature
+  NavigationRoute? _activeRoute;
+  int _currentRouteSegmentIndex = 0;  // Which segment of the route we're on
 
   final List<BeaconNode> _allBeacons = [
     beaconANode,
     beaconBNode,
-    // const BeaconNode(
-    //   uid: 'beacon_xray',
-    //   name: 'X-Ray Department',
-    //   x: 100,
-    //   y: 220,
-    //   floor: 1,
-    //   departmentId: 'xray',
-    //   connectedNodes: ['beacon_radiology', 'beacon_corridor_1_1'],
-    // ),
+    
+    // ============ FLOOR 1 CORRIDOR WAYPOINTS ============
+    // Main entrance (bottom center)
+    const BeaconNode(
+      uid: 'beacon_entrance',
+      name: 'Main Entrance',
+      x: 400,
+      y: 550,
+      floor: 1,
+      departmentId: 'entrance',
+      connectedNodes: ['beacon_corridor_1_center'],
+    ),
+    
+    // Central corridor junction (main hub)
+    const BeaconNode(
+      uid: 'beacon_corridor_1_center',
+      name: 'Central Corridor F1',
+      x: 400,
+      y: 350,
+      floor: 1,
+      connectedNodes: ['beacon_entrance', 'beacon_corridor_1_north', 'beacon_corridor_1_west', 'beacon_corridor_1_east', 'beacon_reception'],
+    ),
+    
+    // North corridor (to elevator/stairs)
+    const BeaconNode(
+      uid: 'beacon_corridor_1_north',
+      name: 'North Corridor F1',
+      x: 400,
+      y: 250,
+      floor: 1,
+      connectedNodes: ['beacon_corridor_1_center', 'beacon_elevator_1', 'beacon_stairs_1'],
+    ),
+    
+    // West corridor waypoint (to radiology/xray)
+    const BeaconNode(
+      uid: 'beacon_corridor_1_west',
+      name: 'West Corridor F1',
+      x: 200,
+      y: 350,
+      floor: 1,
+      connectedNodes: ['beacon_corridor_1_center', 'beacon_radiology_door'],
+    ),
+    
+    // East corridor waypoint (to pharmacy)
+    const BeaconNode(
+      uid: 'beacon_corridor_1_east',
+      name: 'East Corridor F1',
+      x: 600,
+      y: 350,
+      floor: 1,
+      connectedNodes: ['beacon_corridor_1_center', 'beacon_pharmacy_door'],
+    ),
+    
+    // Radiology door (corridor waypoint before entering room)
+    const BeaconNode(
+      uid: 'beacon_radiology_door',
+      name: 'Radiology Entrance',
+      x: 200,
+      y: 290,
+      floor: 1,
+      connectedNodes: ['beacon_corridor_1_west', 'beacon_radiology', 'beacon_xray_door'],
+    ),
+    
+    // X-Ray door (corridor waypoint)
+    const BeaconNode(
+      uid: 'beacon_xray_door',
+      name: 'X-Ray Entrance',
+      x: 90,
+      y: 290,
+      floor: 1,
+      connectedNodes: ['beacon_radiology_door', 'beacon_xray'],
+    ),
+    
+    // Pharmacy door
+    const BeaconNode(
+      uid: 'beacon_pharmacy_door',
+      name: 'Pharmacy Entrance',
+      x: 600,
+      y: 290,
+      floor: 1,
+      connectedNodes: ['beacon_corridor_1_east', 'beacon_pharmacy'],
+    ),
+    
+    // Pharmacy room
+    const BeaconNode(
+      uid: 'beacon_pharmacy',
+      name: 'Pharmacy',
+      x: 600,
+      y: 220,
+      floor: 1,
+      departmentId: 'pharmacy',
+      connectedNodes: ['beacon_pharmacy_door'],
+    ),
+    
+    // Radiology room
+    const BeaconNode(
+      uid: 'beacon_radiology',
+      name: 'Radiology',
+      x: 200,
+      y: 220,
+      floor: 1,
+      departmentId: 'radiology',
+      connectedNodes: ['beacon_radiology_door'],
+    ),
+    
+    // ============ FLOOR 2 ============
     const BeaconNode(
       uid: 'beacon_imaging',
       name: 'Imaging Department',
@@ -110,7 +233,7 @@ class HybridBeaconDataSource implements BeaconDataSource {
       y: 220,
       floor: 2,
       departmentId: 'imaging',
-      connectedNodes: ['beacon_corridor_2_1', 'beacon_lab_2'],
+      connectedNodes: ['beacon_imaging_door'],
     ),
     const BeaconNode(
       uid: 'beacon_icu',
@@ -119,24 +242,7 @@ class HybridBeaconDataSource implements BeaconDataSource {
       y: 500,
       floor: 3,
       departmentId: 'icu',
-      connectedNodes: ['beacon_corridor_3_1', 'beacon_icu_waiting'],
-    ),
-    const BeaconNode(
-      uid: 'beacon_corridor_1_1',
-      name: 'Main Corridor F1',
-      x: 400,
-      y: 350,
-      floor: 1,
-      connectedNodes: ['beacon_reception', 'beacon_radiology', 'beacon_elevator_1', 'beacon_stairs_1', 'beacon_entrance'],
-    ),
-    const BeaconNode(
-      uid: 'beacon_radiology',
-      name: 'Radiology',
-      x: 200,
-      y: 220,
-      floor: 1,
-      departmentId: 'radiology',
-      connectedNodes: ['beacon_corridor_1_1', 'beacon_xray'],
+      connectedNodes: ['beacon_icu_door', 'beacon_icu_waiting'],
     ),
     const BeaconNode(
       uid: 'beacon_elevator_1',
@@ -145,7 +251,7 @@ class HybridBeaconDataSource implements BeaconDataSource {
       y: 195,
       floor: 1,
       departmentId: 'elevator',
-      connectedNodes: ['beacon_corridor_1_1', 'beacon_stairs_1', 'beacon_elevator_2'],
+      connectedNodes: ['beacon_corridor_1_north', 'beacon_stairs_1', 'beacon_elevator_2'],
     ),
     const BeaconNode(
       uid: 'beacon_stairs_1',
@@ -154,7 +260,7 @@ class HybridBeaconDataSource implements BeaconDataSource {
       y: 195,
       floor: 1,
       departmentId: 'stairs',
-      connectedNodes: ['beacon_corridor_1_1', 'beacon_elevator_1', 'beacon_stairs_2'],
+      connectedNodes: ['beacon_corridor_1_north', 'beacon_elevator_1', 'beacon_stairs_2'],
     ),
     const BeaconNode(
       uid: 'beacon_elevator_2',
@@ -163,7 +269,7 @@ class HybridBeaconDataSource implements BeaconDataSource {
       y: 195,
       floor: 2,
       departmentId: 'elevator',
-      connectedNodes: ['beacon_corridor_2_1', 'beacon_stairs_2', 'beacon_elevator_1', 'beacon_elevator_3'],
+      connectedNodes: ['beacon_corridor_2_north', 'beacon_stairs_2', 'beacon_elevator_1', 'beacon_elevator_3'],
     ),
     const BeaconNode(
       uid: 'beacon_stairs_2',
@@ -172,15 +278,48 @@ class HybridBeaconDataSource implements BeaconDataSource {
       y: 195,
       floor: 2,
       departmentId: 'stairs',
-      connectedNodes: ['beacon_corridor_2_1', 'beacon_elevator_2', 'beacon_stairs_1', 'beacon_stairs_3'],
+      connectedNodes: ['beacon_corridor_2_north', 'beacon_elevator_2', 'beacon_stairs_1', 'beacon_stairs_3'],
     ),
+    // Floor 2 corridor waypoints
     const BeaconNode(
-      uid: 'beacon_corridor_2_1',
-      name: 'Main Corridor F2',
+      uid: 'beacon_corridor_2_center',
+      name: 'Central Corridor F2',
       x: 400,
       y: 350,
       floor: 2,
-      connectedNodes: ['beacon_elevator_2', 'beacon_stairs_2', 'beacon_lab_2', 'beacon_imaging'],
+      connectedNodes: ['beacon_corridor_2_north', 'beacon_corridor_2_east'],
+    ),
+    const BeaconNode(
+      uid: 'beacon_corridor_2_north',
+      name: 'North Corridor F2',
+      x: 400,
+      y: 250,
+      floor: 2,
+      connectedNodes: ['beacon_corridor_2_center', 'beacon_elevator_2', 'beacon_stairs_2'],
+    ),
+    const BeaconNode(
+      uid: 'beacon_corridor_2_east',
+      name: 'East Corridor F2',
+      x: 600,
+      y: 350,
+      floor: 2,
+      connectedNodes: ['beacon_corridor_2_center', 'beacon_lab_door'],
+    ),
+    const BeaconNode(
+      uid: 'beacon_lab_door',
+      name: 'Lab Entrance',
+      x: 600,
+      y: 290,
+      floor: 2,
+      connectedNodes: ['beacon_corridor_2_east', 'beacon_lab_2', 'beacon_imaging_door'],
+    ),
+    const BeaconNode(
+      uid: 'beacon_imaging_door',
+      name: 'Imaging Entrance',
+      x: 710,
+      y: 290,
+      floor: 2,
+      connectedNodes: ['beacon_lab_door', 'beacon_imaging'],
     ),
     const BeaconNode(
       uid: 'beacon_lab_2',
@@ -189,7 +328,7 @@ class HybridBeaconDataSource implements BeaconDataSource {
       y: 220,
       floor: 2,
       departmentId: 'lab_2',
-      connectedNodes: ['beacon_corridor_2_1', 'beacon_imaging'],
+      connectedNodes: ['beacon_lab_door'],
     ),
     const BeaconNode(
       uid: 'beacon_elevator_3',
@@ -198,7 +337,7 @@ class HybridBeaconDataSource implements BeaconDataSource {
       y: 195,
       floor: 3,
       departmentId: 'elevator',
-      connectedNodes: ['beacon_corridor_3_1', 'beacon_stairs_3', 'beacon_elevator_2'],
+      connectedNodes: ['beacon_corridor_3_north', 'beacon_stairs_3', 'beacon_elevator_2'],
     ),
     const BeaconNode(
       uid: 'beacon_stairs_3',
@@ -207,15 +346,56 @@ class HybridBeaconDataSource implements BeaconDataSource {
       y: 195,
       floor: 3,
       departmentId: 'stairs',
-      connectedNodes: ['beacon_corridor_3_1', 'beacon_elevator_3', 'beacon_stairs_2'],
+      connectedNodes: ['beacon_corridor_3_north', 'beacon_elevator_3', 'beacon_stairs_2'],
     ),
+    // Floor 3 corridor waypoints
     const BeaconNode(
-      uid: 'beacon_corridor_3_1',
-      name: 'Main Corridor F3',
+      uid: 'beacon_corridor_3_center',
+      name: 'Central Corridor F3',
       x: 400,
       y: 350,
       floor: 3,
-      connectedNodes: ['beacon_elevator_3', 'beacon_stairs_3', 'beacon_icu', 'beacon_cardiology'],
+      connectedNodes: ['beacon_corridor_3_north', 'beacon_corridor_3_west', 'beacon_corridor_3_east'],
+    ),
+    const BeaconNode(
+      uid: 'beacon_corridor_3_north',
+      name: 'North Corridor F3',
+      x: 400,
+      y: 250,
+      floor: 3,
+      connectedNodes: ['beacon_corridor_3_center', 'beacon_elevator_3', 'beacon_stairs_3'],
+    ),
+    const BeaconNode(
+      uid: 'beacon_corridor_3_west',
+      name: 'West Corridor F3',
+      x: 200,
+      y: 350,
+      floor: 3,
+      connectedNodes: ['beacon_corridor_3_center', 'beacon_cardiology_door'],
+    ),
+    const BeaconNode(
+      uid: 'beacon_corridor_3_east',
+      name: 'East Corridor F3',
+      x: 600,
+      y: 350,
+      floor: 3,
+      connectedNodes: ['beacon_corridor_3_center', 'beacon_icu_door'],
+    ),
+    const BeaconNode(
+      uid: 'beacon_cardiology_door',
+      name: 'Cardiology Entrance',
+      x: 200,
+      y: 290,
+      floor: 3,
+      connectedNodes: ['beacon_corridor_3_west', 'beacon_cardiology'],
+    ),
+    const BeaconNode(
+      uid: 'beacon_icu_door',
+      name: 'ICU Entrance',
+      x: 600,
+      y: 420,
+      floor: 3,
+      connectedNodes: ['beacon_corridor_3_east', 'beacon_icu'],
     ),
     const BeaconNode(
       uid: 'beacon_cardiology',
@@ -224,7 +404,7 @@ class HybridBeaconDataSource implements BeaconDataSource {
       y: 220,
       floor: 3,
       departmentId: 'cardiology',
-      connectedNodes: ['beacon_corridor_3_1'],
+      connectedNodes: ['beacon_cardiology_door'],
     ),
     const BeaconNode(
       uid: 'beacon_icu_waiting',
@@ -378,20 +558,9 @@ class HybridBeaconDataSource implements BeaconDataSource {
 
   void _processScanResults(List<ScanResult> results) {
     final now = DateTime.now();
-    
-    if (results.isNotEmpty) {
-      debugPrint('🔍 Scan batch: ${results.length} devices found');
-    }
 
     for (final result in results) {
-      final deviceName = result.device.platformName.isNotEmpty 
-          ? result.device.platformName 
-          : result.device.remoteId.str;
       final manufacturerData = result.advertisementData.manufacturerData;
-      
-      if (manufacturerData.isNotEmpty) {
-        debugPrint('📱 Device: $deviceName, RSSI: ${result.rssi}');
-      }
       
       if (manufacturerData.containsKey(0x004C)) {
         final data = manufacturerData[0x004C]!;
@@ -399,34 +568,44 @@ class HybridBeaconDataSource implements BeaconDataSource {
         if (data.length >= 23 && data[0] == 0x02 && data[1] == 0x15) {
           final uuid = _extractUuid(data.sublist(2, 18));
           final rssi = result.rssi;
-          
           final normalizedUuid = uuid.toUpperCase();
           
-          debugPrint('📡 iBeacon FOUND: UUID=$uuid, RSSI=$rssi');
-          
           if (normalizedUuid == beaconAUuid.toUpperCase()) {
-            _beaconARssi = rssi;
+            final filteredRssi = _applyKalmanFilter(rssi, true);
+            _beaconARssi = filteredRssi.round();
             _lastBeaconATime = now;
-            debugPrint('✅ Beacon A detected! RSSI: $rssi');
           } else if (normalizedUuid == beaconBUuid.toUpperCase()) {
-            _beaconBRssi = rssi;
+            final filteredRssi = _applyKalmanFilter(rssi, false);
+            _beaconBRssi = filteredRssi.round();
             _lastBeaconBTime = now;
-            debugPrint('✅ Beacon B detected! RSSI: $rssi');
           }
         }
       }
     }
 
     // Clear stale beacons (longer timeout for stability)
-    if (_lastBeaconATime != null && now.difference(_lastBeaconATime!).inSeconds > 12) {
+    if (_lastBeaconATime != null && now.difference(_lastBeaconATime!).inSeconds > 10) {
       _beaconARssi = null;
       _distanceABuffer.clear();
+      _rssiABuffer.clear();
+      _kalmanARssi = null;
+      _kalmanAVariance = 1.0;
+      _confidenceA = 0.0;
       debugPrint('🔴 Beacon A stale, clearing');
     }
-    if (_lastBeaconBTime != null && now.difference(_lastBeaconBTime!).inSeconds > 12) {
+    if (_lastBeaconBTime != null && now.difference(_lastBeaconBTime!).inSeconds > 10) {
       _beaconBRssi = null;
       _distanceBBuffer.clear();
+      _rssiBBuffer.clear();
+      _kalmanBRssi = null;
+      _kalmanBVariance = 1.0;
+      _confidenceB = 0.0;
       debugPrint('🔴 Beacon B stale, clearing');
+    }
+    // Reset position smoothing if both beacons are lost
+    if (_beaconARssi == null && _beaconBRssi == null) {
+      _smoothedX = null;
+      _smoothedY = null;
     }
   }
 
@@ -436,9 +615,64 @@ class HybridBeaconDataSource implements BeaconDataSource {
            '${hex.substring(12, 16)}-${hex.substring(16, 20)}-${hex.substring(20)}';
   }
 
+  /// Kalman filter for RSSI smoothing - reduces noise while tracking real changes
+  double _applyKalmanFilter(int rawRssi, bool isBeaconA) {
+    // Add to buffer for outlier detection
+    final buffer = isBeaconA ? _rssiABuffer : _rssiBBuffer;
+    buffer.add(rawRssi);
+    if (buffer.length > _rssiBufferSize) {
+      buffer.removeAt(0);
+    }
+    
+    // Outlier rejection: if new value is too far from median, reduce its weight
+    double measurementRssi = rawRssi.toDouble();
+    if (buffer.length >= 3) {
+      final sorted = List<int>.from(buffer)..sort();
+      final median = sorted[sorted.length ~/ 2];
+      final diff = (rawRssi - median).abs();
+      if (diff > 10) {
+        // Outlier detected - use median instead
+        measurementRssi = median.toDouble();
+      }
+    }
+    
+    // Kalman filter update
+    if (isBeaconA) {
+      if (_kalmanARssi == null) {
+        // Initialize
+        _kalmanARssi = measurementRssi;
+        _kalmanAVariance = 1.0;
+      } else {
+        // Predict
+        final predictedVariance = _kalmanAVariance + _kalmanProcessNoise;
+        
+        // Update
+        final kalmanGain = predictedVariance / (predictedVariance + _kalmanMeasurementNoise);
+        _kalmanARssi = _kalmanARssi! + kalmanGain * (measurementRssi - _kalmanARssi!);
+        _kalmanAVariance = (1 - kalmanGain) * predictedVariance;
+      }
+      return _kalmanARssi!;
+    } else {
+      if (_kalmanBRssi == null) {
+        // Initialize
+        _kalmanBRssi = measurementRssi;
+        _kalmanBVariance = 1.0;
+      } else {
+        // Predict
+        final predictedVariance = _kalmanBVariance + _kalmanProcessNoise;
+        
+        // Update
+        final kalmanGain = predictedVariance / (predictedVariance + _kalmanMeasurementNoise);
+        _kalmanBRssi = _kalmanBRssi! + kalmanGain * (measurementRssi - _kalmanBRssi!);
+        _kalmanBVariance = (1 - kalmanGain) * predictedVariance;
+      }
+      return _kalmanBRssi!;
+    }
+  }
+
   void _startPositionUpdates() {
     _updateTimer?.cancel();
-    _updateTimer = Timer.periodic(const Duration(milliseconds: 500), (_) {
+    _updateTimer = Timer.periodic(const Duration(milliseconds: 350), (_) {
       _calculateInterpolatedPosition();
     });
   }
@@ -477,53 +711,96 @@ class HybridBeaconDataSource implements BeaconDataSource {
     // Determine nearest beacon with hysteresis and anti-flicker logic
     final nearestBeacon = _determineNearestBeaconWithHysteresis(distanceA, distanceB);
     
-    // Position arrow based on stable nearest beacon determination
-    if (nearestBeacon == 'A') {
-      currentLocation = 'At Reception (Beacon A)';
-      if (distanceA != null && distanceB != null) {
-        currentLocation += ' - A: ${distanceA.toStringAsFixed(1)}m, B: ${distanceB.toStringAsFixed(1)}m';
-      }
-      _emitStatus(distanceA, distanceB, currentLocation);
-      _emitPosition(beaconANode);
-    } else if (nearestBeacon == 'B') {
-      currentLocation = 'At X-Ray (Beacon B)';
-      if (distanceA != null && distanceB != null) {
-        currentLocation += ' - A: ${distanceA.toStringAsFixed(1)}m, B: ${distanceB.toStringAsFixed(1)}m';
-      }
-      _emitStatus(distanceA, distanceB, currentLocation);
-      _emitPosition(beaconBNode);
-    } else if (nearestBeacon == 'MIDDLE') {
-      // Ambiguous state - both beacons similar distance
-      // Interpolate position but don't change UI state rapidly
-      if (distanceA != null && distanceB != null) {
-        final totalDistance = distanceA + distanceB;
-        final ratio = distanceB / totalDistance;
-        
-        final interpolatedX = beaconANode.x + (beaconBNode.x - beaconANode.x) * ratio;
-        final interpolatedY = beaconANode.y + (beaconBNode.y - beaconANode.y) * ratio;
-        
-        final interpolatedNode = BeaconNode(
-          uid: 'interpolated',
-          name: 'Between beacons',
-          x: interpolatedX,
-          y: interpolatedY,
-          floor: 1,
-          departmentId: '',
-          connectedNodes: [],
-        );
-        
-        currentLocation = 'Between beacons - A: ${distanceA.toStringAsFixed(1)}m, B: ${distanceB.toStringAsFixed(1)}m';
+    // ============ SNAP-TO-ROUTE MODE ============
+    // When navigating with an active route, constrain position to the route path
+    if (_activeRoute != null && _activeRoute!.nodes.length >= 2) {
+      final routePosition = _calculateRoutePosition(distanceA, distanceB);
+      if (routePosition != null) {
+        currentLocation = 'On route - A: ${distanceA?.toStringAsFixed(1) ?? "?"}m, B: ${distanceB?.toStringAsFixed(1) ?? "?"}m';
         _emitStatus(distanceA, distanceB, currentLocation);
-        _emitPosition(interpolatedNode);
+        _emitPosition(routePosition);
+        return;
       }
+    }
+    
+    // ============ FREE POSITIONING MODE ============
+    // When no active route, use beacon-based interpolation
+    if (distanceA != null && distanceB != null) {
+      // SNAP TO BEACON: If distance < 1m, place marker exactly on the beacon
+      if (distanceA < 1.0 && distanceA < distanceB) {
+        // Very close to Beacon A - snap to it
+        _smoothedX = beaconANode.x;
+        _smoothedY = beaconANode.y;
+        currentLocation = 'At Reception (Beacon A) - A: ${distanceA.toStringAsFixed(1)}m, B: ${distanceB.toStringAsFixed(1)}m';
+        _emitStatus(distanceA, distanceB, currentLocation);
+        _emitPosition(beaconANode);
+        return;
+      } else if (distanceB < 1.0 && distanceB < distanceA) {
+        // Very close to Beacon B - snap to it
+        _smoothedX = beaconBNode.x;
+        _smoothedY = beaconBNode.y;
+        currentLocation = 'At X-Ray (Beacon B) - A: ${distanceA.toStringAsFixed(1)}m, B: ${distanceB.toStringAsFixed(1)}m';
+        _emitStatus(distanceA, distanceB, currentLocation);
+        _emitPosition(beaconBNode);
+        return;
+      }
+      
+      // Calculate confidence based on signal strength (stronger = more confident)
+      // RSSI closer to 0 is stronger, so we invert and normalize
+      _confidenceA = _beaconARssi != null ? (100 + _beaconARssi!) / 100.0 : 0.5;
+      _confidenceB = _beaconBRssi != null ? (100 + _beaconBRssi!) / 100.0 : 0.5;
+      _confidenceA = _confidenceA.clamp(0.1, 1.0);
+      _confidenceB = _confidenceB.clamp(0.1, 1.0);
+      
+      // Weighted positioning: closer beacon with stronger signal has more influence
+      // Weight = confidence / distance (closer + stronger = higher weight)
+      final weightA = _confidenceA / (distanceA + 0.1);  // +0.1 prevents division by zero
+      final weightB = _confidenceB / (distanceB + 0.1);
+      final totalWeight = weightA + weightB;
+      
+      // Ratio based on weighted distances (0 = at A, 1 = at B)
+      final ratio = (weightB / totalWeight).clamp(0.0, 1.0);
+      
+      final rawX = beaconANode.x + (beaconBNode.x - beaconANode.x) * ratio;
+      final rawY = beaconANode.y + (beaconBNode.y - beaconANode.y) * ratio;
+      
+      // Apply exponential moving average for smooth position transitions
+      if (_smoothedX == null || _smoothedY == null) {
+        _smoothedX = rawX;
+        _smoothedY = rawY;
+      } else {
+        _smoothedX = _smoothedX! + _positionSmoothingFactor * (rawX - _smoothedX!);
+        _smoothedY = _smoothedY! + _positionSmoothingFactor * (rawY - _smoothedY!);
+      }
+      
+      final interpolatedNode = BeaconNode(
+        uid: 'interpolated',
+        name: nearestBeacon == 'A' ? 'Near Reception' : (nearestBeacon == 'B' ? 'Near X-Ray' : 'Between beacons'),
+        x: _smoothedX!,
+        y: _smoothedY!,
+        floor: 1,
+        departmentId: nearestBeacon == 'A' ? 'reception' : (nearestBeacon == 'B' ? 'xray' : ''),
+        connectedNodes: [],
+      );
+      
+      if (nearestBeacon == 'A') {
+        currentLocation = 'At Reception (Beacon A) - A: ${distanceA.toStringAsFixed(1)}m, B: ${distanceB.toStringAsFixed(1)}m';
+      } else if (nearestBeacon == 'B') {
+        currentLocation = 'At X-Ray (Beacon B) - A: ${distanceA.toStringAsFixed(1)}m, B: ${distanceB.toStringAsFixed(1)}m';
+      } else {
+        currentLocation = 'Between beacons - A: ${distanceA.toStringAsFixed(1)}m, B: ${distanceB.toStringAsFixed(1)}m';
+      }
+      
+      _emitStatus(distanceA, distanceB, currentLocation);
+      _emitPosition(interpolatedNode);
     } else if (distanceA != null && distanceB == null) {
-      // Only Beacon A detected
-      currentLocation = 'At Reception (Beacon A only)';
+      // Only Beacon A detected - position at beacon A
+      currentLocation = 'At Reception (Beacon A only) - A: ${distanceA.toStringAsFixed(1)}m';
       _emitStatus(distanceA, distanceB, currentLocation);
       _emitPosition(beaconANode);
     } else if (distanceB != null && distanceA == null) {
-      // Only Beacon B detected
-      currentLocation = 'At X-Ray (Beacon B only)';
+      // Only Beacon B detected - position at beacon B
+      currentLocation = 'At X-Ray (Beacon B only) - B: ${distanceB.toStringAsFixed(1)}m';
       _emitStatus(distanceA, distanceB, currentLocation);
       _emitPosition(beaconBNode);
     }
@@ -609,18 +886,32 @@ class HybridBeaconDataSource implements BeaconDataSource {
   }
   
   double _rssiToDistance(int rssi) {
-    // Calibrated parameters for MAXIMUM accuracy
-    // txPower: Measured RSSI at 1 meter - CALIBRATE THIS WITH YOUR ACTUAL BEACONS!
-    // n: Path loss exponent (higher = more aggressive distance scaling)
-    const txPower = -65;  // Typical for most BLE beacons at 1m (adjust if needed)
-    const n = 2.7;  // Indoor with obstacles - higher for more stable readings
+    // Advanced distance calculation using Apple's iBeacon ranging algorithm
+    // This is based on empirical measurements and provides smooth, accurate results
     
-    // Log-distance path loss model
-    final ratio = (txPower - rssi) / (10 * n);
-    final distance = pow(10, ratio);
+    // txPower: Measured RSSI at exactly 1 meter from your beacon
+    // CALIBRATION TIP: Stand 1m from beacon, note the RSSI - that's your txPower
+    const double txPower = -59.0;  // Adjust based on your actual beacon
     
-    // Clamp to reasonable indoor range
-    return distance.toDouble().clamp(0.3, 30.0);
+    if (rssi == 0) {
+      return -1.0;  // Unknown distance
+    }
+    
+    final double ratio = rssi / txPower;
+    
+    if (ratio < 1.0) {
+      // Very close (< 1 meter) - use simple power model
+      return pow(ratio, 10).toDouble().clamp(0.1, 1.0);
+    } else {
+      // Standard range - use empirically-derived formula
+      // This formula is based on Apple's CoreLocation accuracy model
+      const double A = 0.89976;  // Coefficient A
+      const double B = 7.7095;   // Coefficient B  
+      const double C = 0.111;    // Coefficient C (environmental factor)
+      
+      final double distance = A * pow(ratio, B) + C;
+      return distance.clamp(0.1, 30.0);
+    }
   }
 
 
@@ -635,7 +926,7 @@ class HybridBeaconDataSource implements BeaconDataSource {
   bool _hasSignificantMovement(BeaconNode oldPos, BeaconNode newPos) {
     // Only emit position updates for significant movement
     // This prevents UI rebuilds on minor position changes
-    const threshold = 15.0;  // Balanced: responsive but stable (15 pixels)
+    const threshold = 25.0;  // Higher = more stable, less jitter (25 pixels)
     final dx = oldPos.x - newPos.x;
     final dy = oldPos.y - newPos.y;
     final distance = sqrt(dx * dx + dy * dy);
@@ -658,6 +949,16 @@ class HybridBeaconDataSource implements BeaconDataSource {
     _beaconBRssi = null;
     _distanceABuffer.clear();
     _distanceBBuffer.clear();
+    _rssiABuffer.clear();
+    _rssiBBuffer.clear();
+    _kalmanARssi = null;
+    _kalmanBRssi = null;
+    _kalmanAVariance = 1.0;
+    _kalmanBVariance = 1.0;
+    _smoothedX = null;
+    _smoothedY = null;
+    _confidenceA = 0.0;
+    _confidenceB = 0.0;
     _currentNearestBeacon = null;
     _pendingNearestBeacon = null;
     _pendingConfirmationCount = 0;
@@ -688,9 +989,117 @@ class HybridBeaconDataSource implements BeaconDataSource {
 
   bool get isUsingRealBeacons => true;
 
-  /// Set the active navigation route (not used - arrow shows at nearest beacon)
+  /// Set the active navigation route for snap-to-route positioning
   void setActiveRoute(NavigationRoute? route) {
-    // Route-based tracking disabled - arrow always shows at nearest beacon
-    debugPrint('🗺️ Route set but not used for positioning: ${route?.nodes.length ?? 0} nodes');
+    _activeRoute = route;
+    _currentRouteSegmentIndex = 0;
+    if (route != null) {
+      debugPrint('🗺️ Active route set: ${route.nodes.length} nodes');
+      for (int i = 0; i < route.nodes.length; i++) {
+        debugPrint('  Node $i: ${route.nodes[i].name} (${route.nodes[i].x}, ${route.nodes[i].y})');
+      }
+    } else {
+      debugPrint('🗺️ Active route cleared');
+      // Reset smoothed position when route is cleared
+      _smoothedX = null;
+      _smoothedY = null;
+    }
+  }
+  
+  /// Calculate position on route based on beacon distances
+  /// Uses simple interpolation along the entire route based on relative distances
+  BeaconNode? _calculateRoutePosition(double? distanceA, double? distanceB) {
+    if (_activeRoute == null || _activeRoute!.nodes.isEmpty) return null;
+    
+    final routeNodes = _activeRoute!.nodes;
+    if (routeNodes.length < 2) return null;
+    
+    // We need at least one distance measurement
+    if (distanceA == null && distanceB == null) return null;
+    
+    // Calculate total route length (sum of all segment lengths)
+    double totalRouteLength = 0;
+    List<double> cumulativeLengths = [0];  // Distance from start to each node
+    
+    for (int i = 1; i < routeNodes.length; i++) {
+      final segmentLength = _calculateNodeDistance(routeNodes[i - 1], routeNodes[i]);
+      totalRouteLength += segmentLength;
+      cumulativeLengths.add(totalRouteLength);
+    }
+    
+    if (totalRouteLength < 1.0) return routeNodes.first;
+    
+    // Calculate progress along route (0 = start, 1 = end)
+    // Based on relative distances to both beacons
+    double progress;
+    
+    if (distanceA != null && distanceB != null) {
+      // Both beacons detected - use ratio of distances
+      // Closer to A (smaller distanceA) = closer to start
+      // Closer to B (smaller distanceB) = closer to end
+      final totalDistance = distanceA + distanceB;
+      if (totalDistance > 0) {
+        // progress = how far along route (0=at A/start, 1=at B/end)
+        progress = (distanceA / totalDistance).clamp(0.0, 1.0);
+      } else {
+        progress = 0.5;
+      }
+    } else if (distanceA != null) {
+      // Only beacon A detected - estimate based on distance
+      // Assume max reasonable indoor distance is ~15m
+      progress = (distanceA / 15.0).clamp(0.0, 1.0);
+    } else {
+      // Only beacon B detected
+      progress = 1.0 - (distanceB! / 15.0).clamp(0.0, 1.0);
+    }
+    
+    // Convert progress to position along route
+    final targetDistance = progress * totalRouteLength;
+    
+    // Find which segment we're on
+    int segmentIndex = 0;
+    for (int i = 1; i < cumulativeLengths.length; i++) {
+      if (targetDistance <= cumulativeLengths[i]) {
+        segmentIndex = i - 1;
+        break;
+      }
+      segmentIndex = i - 1;
+    }
+    
+    // Calculate position within segment
+    final segmentStart = routeNodes[segmentIndex];
+    final segmentEnd = routeNodes[min(segmentIndex + 1, routeNodes.length - 1)];
+    final segmentStartDist = cumulativeLengths[segmentIndex];
+    final segmentLength = _calculateNodeDistance(segmentStart, segmentEnd);
+    
+    double segmentProgress = 0;
+    if (segmentLength > 0) {
+      segmentProgress = ((targetDistance - segmentStartDist) / segmentLength).clamp(0.0, 1.0);
+    }
+    
+    // Interpolate position EXACTLY on segment - no smoothing to avoid cutting corners
+    final exactX = segmentStart.x + (segmentEnd.x - segmentStart.x) * segmentProgress;
+    final exactY = segmentStart.y + (segmentEnd.y - segmentStart.y) * segmentProgress;
+    
+    _currentRouteSegmentIndex = segmentIndex;
+    
+    debugPrint('📍 Route position: progress=${(progress * 100).toStringAsFixed(0)}%, segment=$segmentIndex, pos=(${exactX.toStringAsFixed(0)}, ${exactY.toStringAsFixed(0)})');
+    
+    return BeaconNode(
+      uid: 'route_position',
+      name: 'On Route',
+      x: exactX,
+      y: exactY,
+      floor: segmentStart.floor,
+      departmentId: '',
+      connectedNodes: [],
+    );
+  }
+  
+  /// Calculate distance between two nodes (pixels)
+  double _calculateNodeDistance(BeaconNode a, BeaconNode b) {
+    final dx = a.x - b.x;
+    final dy = a.y - b.y;
+    return sqrt(dx * dx + dy * dy);
   }
 }
