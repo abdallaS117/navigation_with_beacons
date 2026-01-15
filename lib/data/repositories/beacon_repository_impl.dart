@@ -37,11 +37,6 @@ class BeaconRepositoryImpl implements BeaconRepository {
   }
 
   @override
-  void simulateBeaconChange(String beaconUid) {
-    dataSource.simulateBeaconChange(beaconUid);
-  }
-
-  @override
   void setActiveRoute(NavigationRoute? route) {
     // Only HybridBeaconDataSource supports route-based tracking
     if (dataSource is HybridBeaconDataSource) {

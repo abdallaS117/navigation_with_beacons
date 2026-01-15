@@ -8,6 +8,5 @@ abstract class BeaconRepository {
   Future<List<BeaconNode>> getBeaconsByFloor(int floor);
   Future<void> startScanning();
   Future<void> stopScanning();
-  void simulateBeaconChange(String beaconUid);
   void setActiveRoute(NavigationRoute? route);
 }

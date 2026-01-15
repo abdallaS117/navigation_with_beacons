@@ -5,6 +5,7 @@ import 'package:flutter_blue_plus/flutter_blue_plus.dart';
 import 'package:permission_handler/permission_handler.dart';
 import '../../domain/entities/beacon_node.dart';
 import '../../domain/entities/navigation_route.dart';
+import '../providers/static_beacon_configuration.dart';
 
 // Abstract interface for beacon data sources
 abstract class BeaconDataSource {
@@ -14,7 +15,6 @@ abstract class BeaconDataSource {
   List<BeaconNode> getBeaconsByFloor(int floor);
   Future<void> startScanning();
   void stopScanning();
-  void simulateBeaconChange(String beaconUid);
   void dispose();
 }
 
@@ -45,30 +45,15 @@ class HybridBeaconDataSource implements BeaconDataSource {
   BluetoothAdapterState _adapterState = BluetoothAdapterState.unknown;
   bool _initialized = false;
 
-  // Beacon A: ...96E1 is physically at Reception
-  static const String beaconAUuid = 'E2C56DB5-DFFB-48D2-B060-D0F5A71096E1';
-  // Beacon B: ...96E0 is physically at X-Ray
-  static const String beaconBUuid = 'E2C56DB5-DFFB-48D2-B060-D0F5A71096E0';
+  // Beacon UUIDs from centralized configuration
+  static String get beaconAUuid => StaticBeaconConfiguration.beaconAUuid;
+  static String get beaconBUuid => StaticBeaconConfiguration.beaconBUuid;
 
-  static const BeaconNode beaconANode = BeaconNode(
-    uid: 'beacon_reception',
-    name: 'Reception',
-    x: 400,
-    y: 460,
-    floor: 1,
-    departmentId: 'reception',
-    connectedNodes: ['beacon_corridor_1_center'],
-  );
-
-  static const BeaconNode beaconBNode = BeaconNode(
-    uid: 'beacon_xray',
-    name: 'X-Ray Department',
-    x: 90,
-    y: 220,
-    floor: 1,
-    departmentId: 'xray',
-    connectedNodes: ['beacon_xray_door'],
-  );
+  // Beacon nodes from centralized configuration
+  static BeaconNode get beaconANode => StaticBeaconConfiguration.navigationNodes
+      .firstWhere((n) => n.uid == 'beacon_reception');
+  static BeaconNode get beaconBNode => StaticBeaconConfiguration.navigationNodes
+      .firstWhere((n) => n.uid == 'beacon_xray');
 
   int? _beaconARssi;
   int? _beaconBRssi;
@@ -117,305 +102,8 @@ class HybridBeaconDataSource implements BeaconDataSource {
   NavigationRoute? _activeRoute;
   int _currentRouteSegmentIndex = 0;  // Which segment of the route we're on
 
-  final List<BeaconNode> _allBeacons = [
-    beaconANode,
-    beaconBNode,
-    
-    // ============ FLOOR 1 CORRIDOR WAYPOINTS ============
-    // Main entrance (bottom center)
-    const BeaconNode(
-      uid: 'beacon_entrance',
-      name: 'Main Entrance',
-      x: 400,
-      y: 550,
-      floor: 1,
-      departmentId: 'entrance',
-      connectedNodes: ['beacon_corridor_1_center'],
-    ),
-    
-    // Central corridor junction (main hub)
-    const BeaconNode(
-      uid: 'beacon_corridor_1_center',
-      name: 'Central Corridor F1',
-      x: 400,
-      y: 350,
-      floor: 1,
-      connectedNodes: ['beacon_entrance', 'beacon_corridor_1_north', 'beacon_corridor_1_west', 'beacon_corridor_1_east', 'beacon_reception'],
-    ),
-    
-    // North corridor (to elevator/stairs)
-    const BeaconNode(
-      uid: 'beacon_corridor_1_north',
-      name: 'North Corridor F1',
-      x: 400,
-      y: 250,
-      floor: 1,
-      connectedNodes: ['beacon_corridor_1_center', 'beacon_elevator_1', 'beacon_stairs_1'],
-    ),
-    
-    // West corridor waypoint (to radiology/xray)
-    const BeaconNode(
-      uid: 'beacon_corridor_1_west',
-      name: 'West Corridor F1',
-      x: 200,
-      y: 350,
-      floor: 1,
-      connectedNodes: ['beacon_corridor_1_center', 'beacon_radiology_door'],
-    ),
-    
-    // East corridor waypoint (to pharmacy)
-    const BeaconNode(
-      uid: 'beacon_corridor_1_east',
-      name: 'East Corridor F1',
-      x: 600,
-      y: 350,
-      floor: 1,
-      connectedNodes: ['beacon_corridor_1_center', 'beacon_pharmacy_door'],
-    ),
-    
-    // Radiology door (corridor waypoint before entering room)
-    const BeaconNode(
-      uid: 'beacon_radiology_door',
-      name: 'Radiology Entrance',
-      x: 200,
-      y: 290,
-      floor: 1,
-      connectedNodes: ['beacon_corridor_1_west', 'beacon_radiology', 'beacon_xray_door'],
-    ),
-    
-    // X-Ray door (corridor waypoint)
-    const BeaconNode(
-      uid: 'beacon_xray_door',
-      name: 'X-Ray Entrance',
-      x: 90,
-      y: 290,
-      floor: 1,
-      connectedNodes: ['beacon_radiology_door', 'beacon_xray'],
-    ),
-    
-    // Pharmacy door
-    const BeaconNode(
-      uid: 'beacon_pharmacy_door',
-      name: 'Pharmacy Entrance',
-      x: 600,
-      y: 290,
-      floor: 1,
-      connectedNodes: ['beacon_corridor_1_east', 'beacon_pharmacy'],
-    ),
-    
-    // Pharmacy room
-    const BeaconNode(
-      uid: 'beacon_pharmacy',
-      name: 'Pharmacy',
-      x: 600,
-      y: 220,
-      floor: 1,
-      departmentId: 'pharmacy',
-      connectedNodes: ['beacon_pharmacy_door'],
-    ),
-    
-    // Radiology room
-    const BeaconNode(
-      uid: 'beacon_radiology',
-      name: 'Radiology',
-      x: 200,
-      y: 220,
-      floor: 1,
-      departmentId: 'radiology',
-      connectedNodes: ['beacon_radiology_door'],
-    ),
-    
-    // ============ FLOOR 2 ============
-    const BeaconNode(
-      uid: 'beacon_imaging',
-      name: 'Imaging Department',
-      x: 710,
-      y: 220,
-      floor: 2,
-      departmentId: 'imaging',
-      connectedNodes: ['beacon_imaging_door'],
-    ),
-    const BeaconNode(
-      uid: 'beacon_icu',
-      name: 'ICU Department',
-      x: 600,
-      y: 500,
-      floor: 3,
-      departmentId: 'icu',
-      connectedNodes: ['beacon_icu_door', 'beacon_icu_waiting'],
-    ),
-    const BeaconNode(
-      uid: 'beacon_elevator_1',
-      name: 'Elevator F1',
-      x: 430,
-      y: 195,
-      floor: 1,
-      departmentId: 'elevator',
-      connectedNodes: ['beacon_corridor_1_north', 'beacon_stairs_1', 'beacon_elevator_2'],
-    ),
-    const BeaconNode(
-      uid: 'beacon_stairs_1',
-      name: 'Stairs F1',
-      x: 370,
-      y: 195,
-      floor: 1,
-      departmentId: 'stairs',
-      connectedNodes: ['beacon_corridor_1_north', 'beacon_elevator_1', 'beacon_stairs_2'],
-    ),
-    const BeaconNode(
-      uid: 'beacon_elevator_2',
-      name: 'Elevator F2',
-      x: 430,
-      y: 195,
-      floor: 2,
-      departmentId: 'elevator',
-      connectedNodes: ['beacon_corridor_2_north', 'beacon_stairs_2', 'beacon_elevator_1', 'beacon_elevator_3'],
-    ),
-    const BeaconNode(
-      uid: 'beacon_stairs_2',
-      name: 'Stairs F2',
-      x: 370,
-      y: 195,
-      floor: 2,
-      departmentId: 'stairs',
-      connectedNodes: ['beacon_corridor_2_north', 'beacon_elevator_2', 'beacon_stairs_1', 'beacon_stairs_3'],
-    ),
-    // Floor 2 corridor waypoints
-    const BeaconNode(
-      uid: 'beacon_corridor_2_center',
-      name: 'Central Corridor F2',
-      x: 400,
-      y: 350,
-      floor: 2,
-      connectedNodes: ['beacon_corridor_2_north', 'beacon_corridor_2_east'],
-    ),
-    const BeaconNode(
-      uid: 'beacon_corridor_2_north',
-      name: 'North Corridor F2',
-      x: 400,
-      y: 250,
-      floor: 2,
-      connectedNodes: ['beacon_corridor_2_center', 'beacon_elevator_2', 'beacon_stairs_2'],
-    ),
-    const BeaconNode(
-      uid: 'beacon_corridor_2_east',
-      name: 'East Corridor F2',
-      x: 600,
-      y: 350,
-      floor: 2,
-      connectedNodes: ['beacon_corridor_2_center', 'beacon_lab_door'],
-    ),
-    const BeaconNode(
-      uid: 'beacon_lab_door',
-      name: 'Lab Entrance',
-      x: 600,
-      y: 290,
-      floor: 2,
-      connectedNodes: ['beacon_corridor_2_east', 'beacon_lab_2', 'beacon_imaging_door'],
-    ),
-    const BeaconNode(
-      uid: 'beacon_imaging_door',
-      name: 'Imaging Entrance',
-      x: 710,
-      y: 290,
-      floor: 2,
-      connectedNodes: ['beacon_lab_door', 'beacon_imaging'],
-    ),
-    const BeaconNode(
-      uid: 'beacon_lab_2',
-      name: 'Lab Collection',
-      x: 600,
-      y: 220,
-      floor: 2,
-      departmentId: 'lab_2',
-      connectedNodes: ['beacon_lab_door'],
-    ),
-    const BeaconNode(
-      uid: 'beacon_elevator_3',
-      name: 'Elevator F3',
-      x: 430,
-      y: 195,
-      floor: 3,
-      departmentId: 'elevator',
-      connectedNodes: ['beacon_corridor_3_north', 'beacon_stairs_3', 'beacon_elevator_2'],
-    ),
-    const BeaconNode(
-      uid: 'beacon_stairs_3',
-      name: 'Stairs F3',
-      x: 370,
-      y: 195,
-      floor: 3,
-      departmentId: 'stairs',
-      connectedNodes: ['beacon_corridor_3_north', 'beacon_elevator_3', 'beacon_stairs_2'],
-    ),
-    // Floor 3 corridor waypoints
-    const BeaconNode(
-      uid: 'beacon_corridor_3_center',
-      name: 'Central Corridor F3',
-      x: 400,
-      y: 350,
-      floor: 3,
-      connectedNodes: ['beacon_corridor_3_north', 'beacon_corridor_3_west', 'beacon_corridor_3_east'],
-    ),
-    const BeaconNode(
-      uid: 'beacon_corridor_3_north',
-      name: 'North Corridor F3',
-      x: 400,
-      y: 250,
-      floor: 3,
-      connectedNodes: ['beacon_corridor_3_center', 'beacon_elevator_3', 'beacon_stairs_3'],
-    ),
-    const BeaconNode(
-      uid: 'beacon_corridor_3_west',
-      name: 'West Corridor F3',
-      x: 200,
-      y: 350,
-      floor: 3,
-      connectedNodes: ['beacon_corridor_3_center', 'beacon_cardiology_door'],
-    ),
-    const BeaconNode(
-      uid: 'beacon_corridor_3_east',
-      name: 'East Corridor F3',
-      x: 600,
-      y: 350,
-      floor: 3,
-      connectedNodes: ['beacon_corridor_3_center', 'beacon_icu_door'],
-    ),
-    const BeaconNode(
-      uid: 'beacon_cardiology_door',
-      name: 'Cardiology Entrance',
-      x: 200,
-      y: 290,
-      floor: 3,
-      connectedNodes: ['beacon_corridor_3_west', 'beacon_cardiology'],
-    ),
-    const BeaconNode(
-      uid: 'beacon_icu_door',
-      name: 'ICU Entrance',
-      x: 600,
-      y: 420,
-      floor: 3,
-      connectedNodes: ['beacon_corridor_3_east', 'beacon_icu'],
-    ),
-    const BeaconNode(
-      uid: 'beacon_cardiology',
-      name: 'Cardiology',
-      x: 200,
-      y: 220,
-      floor: 3,
-      departmentId: 'cardiology',
-      connectedNodes: ['beacon_cardiology_door'],
-    ),
-    const BeaconNode(
-      uid: 'beacon_icu_waiting',
-      name: 'ICU Waiting',
-      x: 710,
-      y: 500,
-      floor: 3,
-      departmentId: 'icu_waiting',
-      connectedNodes: ['beacon_icu'],
-    ),
-  ];
+  // Navigation nodes from centralized configuration
+  List<BeaconNode> get _allBeacons => StaticBeaconConfiguration.navigationNodes;
 
   @override
   Stream<BeaconNode?> get nearestBeaconStream => _beaconController.stream;
@@ -965,12 +653,6 @@ class HybridBeaconDataSource implements BeaconDataSource {
     _lastBeaconATime = null;
     _lastBeaconBTime = null;
     debugPrint('🛑 Beacon scan stopped');
-  }
-
-  @override
-  void simulateBeaconChange(String beaconUid) {
-    // Simulation disabled - only real beacons supported
-    debugPrint('⚠️ Beacon simulation is disabled. Only real beacons are supported.');
   }
 
   @override

@@ -1,10 +1,10 @@
-import 'dart:async';
 import 'package:flutter/material.dart';
 import 'package:flutter_bloc/flutter_bloc.dart';
 import '../../domain/entities/beacon_node.dart';
 import '../../core/constants/app_colors.dart';
 import '../../core/constants/app_constants.dart';
 import '../../data/datasources/hybrid_beacon_datasource.dart';
+import '../../features/configuration/configuration.dart';
 import '../logic/navigation_cubit.dart';
 import '../logic/navigation_state.dart';
 import '../logic/beacon_cubit.dart';
@@ -31,10 +31,7 @@ class _IndoorMapViewState extends State<IndoorMapView>
       TransformationController();
   late AnimationController _routeAnimationController;
   late Animation<double> _routeAnimation;
-  bool _isAutoPlaying = false;
   bool _showBeaconStatus = true;
-  Timer? _autoPlayTimer;
-  int _currentAutoPlayIndex = 0;
 
   @override
   void initState() {
@@ -75,71 +72,7 @@ class _IndoorMapViewState extends State<IndoorMapView>
   void dispose() {
     _transformationController.dispose();
     _routeAnimationController.dispose();
-    _autoPlayTimer?.cancel();
     super.dispose();
-  }
-
-  void _toggleAutoPlay(BuildContext context) {
-    setState(() {
-      _isAutoPlaying = !_isAutoPlaying;
-    });
-
-    if (_isAutoPlaying) {
-      _startAutoPlay(context);
-    } else {
-      _stopAutoPlay();
-    }
-  }
-
-  void _startAutoPlay(BuildContext context) {
-    final navState = context.read<NavigationCubit>().state;
-    
-    // Check if there's an active route to follow
-    if (navState.currentRoute == null || navState.currentRoute!.nodes.isEmpty) {
-      // No route, stop auto-play
-      setState(() {
-        _isAutoPlaying = false;
-      });
-      return;
-    }
-
-    final routeNodes = navState.currentRoute!.nodes;
-    _currentAutoPlayIndex = 0;
-    
-    // Immediately move to first node
-    context.read<BeaconCubit>().simulateBeaconChange(routeNodes[0].uid);
-    
-    _autoPlayTimer = Timer.periodic(const Duration(seconds: 2), (timer) {
-      final navState = context.read<NavigationCubit>().state;
-      
-      // Check if route still exists
-      if (navState.currentRoute == null || navState.currentRoute!.nodes.isEmpty) {
-        _stopAutoPlay();
-        setState(() {
-          _isAutoPlaying = false;
-        });
-        return;
-      }
-      
-      final nodes = navState.currentRoute!.nodes;
-      _currentAutoPlayIndex++;
-      
-      // Stop at destination
-      if (_currentAutoPlayIndex >= nodes.length) {
-        _stopAutoPlay();
-        setState(() {
-          _isAutoPlaying = false;
-        });
-        return;
-      }
-
-      context.read<BeaconCubit>().simulateBeaconChange(nodes[_currentAutoPlayIndex].uid);
-    });
-  }
-
-  void _stopAutoPlay() {
-    _autoPlayTimer?.cancel();
-    _autoPlayTimer = null;
   }
 
   void _showDestinationSelector(BuildContext context) {
@@ -178,6 +111,18 @@ class _IndoorMapViewState extends State<IndoorMapView>
     _transformationController.value = Matrix4.identity()
       ..translate(offsetX, offsetY)
       ..scale(scale);
+  }
+
+  void _openConfiguration(BuildContext context) {
+    Navigator.push(
+      context,
+      MaterialPageRoute(
+        builder: (_) => BlocProvider.value(
+          value: context.read<ConfigurationCubit>(),
+          child: const ConfigurationHomeScreen(),
+        ),
+      ),
+    );
   }
 
   @override
@@ -259,25 +204,19 @@ class _IndoorMapViewState extends State<IndoorMapView>
                     ),
                   ),
 
-                  // Auto-play button (visible when route exists)
-                  if (navState.currentRoute != null && navState.currentRoute!.nodes.isNotEmpty)
-                    Positioned(
-                      left: 16,
-                      bottom: (navState.isNavigating ? 90 : 16) + MediaQuery.of(context).padding.bottom,
-                      child: FloatingActionButton(
-                        heroTag: 'route_auto_play',
-                        backgroundColor: _isAutoPlaying
-                            ? AppColors.routeLine
-                            : Colors.white,
-                        foregroundColor: _isAutoPlaying
-                            ? Colors.white
-                            : AppColors.primary,
-                        onPressed: () => _toggleAutoPlay(context),
-                        child: Icon(
-                          _isAutoPlaying ? Icons.pause : Icons.play_arrow,
-                        ),
-                      ),
+                  // Configuration Button
+                  Positioned(
+                    right: 16,
+                    bottom: (navState.selectedDestination != null ? 270 : 150) +
+                        MediaQuery.of(context).padding.bottom,
+                    child: FloatingActionButton.small(
+                      heroTag: 'config',
+                      backgroundColor: Colors.white,
+                      foregroundColor: Colors.grey[700],
+                      onPressed: () => _openConfiguration(context),
+                      child: const Icon(Icons.settings),
                     ),
+                  ),
 
                   // Center on User Button
                   Positioned(

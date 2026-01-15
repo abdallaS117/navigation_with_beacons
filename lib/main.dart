@@ -7,6 +7,7 @@ import 'data/datasources/hybrid_beacon_datasource.dart';
 import 'data/datasources/map_datasource.dart';
 import 'data/repositories/beacon_repository_impl.dart';
 import 'data/repositories/navigation_repository_impl.dart';
+import 'features/configuration/configuration.dart';
 import 'presentation/logic/beacon_cubit.dart';
 import 'presentation/logic/navigation_cubit.dart';
 import 'presentation/views/indoor_map_view.dart';
@@ -36,12 +37,15 @@ class HospitalNavigationApp extends StatelessWidget {
   Widget build(BuildContext context) {
     return MultiRepositoryProvider(
       providers: [
+        // Data sources
         RepositoryProvider<HybridBeaconDataSource>(
           create: (_) => HybridBeaconDataSource(),
         ),
         RepositoryProvider<StaticMapDataSource>(
           create: (_) => StaticMapDataSource(),
         ),
+        
+        // Repositories
         RepositoryProvider<BeaconRepositoryImpl>(
           create: (context) => BeaconRepositoryImpl(
             context.read<HybridBeaconDataSource>(),
@@ -66,6 +70,11 @@ class HospitalNavigationApp extends StatelessWidget {
               navigationRepository: context.read<NavigationRepositoryImpl>(),
               beaconRepository: context.read<BeaconRepositoryImpl>(),
             ),
+          ),
+          BlocProvider<ConfigurationCubit>(
+            create: (_) => ConfigurationCubit(
+              ConfigurationRepository(LocalConfigurationStorageService()),
+            )..loadConfiguration(),
           ),
         ],
         child: MaterialApp(
