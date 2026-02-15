@@ -1,4 +1,5 @@
 import 'dart:async';
+import 'dart:math';
 import 'package:flutter_bloc/flutter_bloc.dart';
 import '../../domain/entities/beacon_node.dart';
 import '../../domain/entities/department.dart';
@@ -63,13 +64,39 @@ class NavigationCubit extends Cubit<NavigationState> {
   void _updateNavigationProgress(BeaconNode beacon) {
     final route = state.currentRoute!;
     
+    // Get destination node (last node in route)
+    final destinationNode = route.nodes.last;
+    
+    // Check distance to destination (only if on same floor)
+    // NOTE: Coordinates are in pixels, not meters. 
+    // Typical indoor map scale: ~30-50 pixels per meter
+    // Using 50 pixels as threshold (~1 meter)
+    const double arrivalThresholdPixels = 50.0;
+    
+    if (beacon.floor == destinationNode.floor) {
+      final distanceToDestination = _calculateDistance(
+        beacon.x, beacon.y,
+        destinationNode.x, destinationNode.y,
+      );
+      
+      // If within threshold of destination, mark as arrived
+      if (distanceToDestination < arrivalThresholdPixels) {
+        emit(state.copyWith(
+          status: NavigationStatus.arrived,
+          currentRouteIndex: route.nodes.length - 1,
+          routeProgress: 1.0,
+        ));
+        return;
+      }
+    }
+    
     // Find current position in route
     final index = route.nodes.indexWhere((n) => n.uid == beacon.uid);
     
     if (index >= 0) {
       final progress = (index + 1) / route.nodes.length;
       
-      // Check if arrived at destination
+      // Check if arrived at destination (exact node match)
       if (index == route.nodes.length - 1) {
         emit(state.copyWith(
           status: NavigationStatus.arrived,
@@ -83,6 +110,12 @@ class NavigationCubit extends Cubit<NavigationState> {
         ));
       }
     }
+  }
+  
+  double _calculateDistance(double x1, double y1, double x2, double y2) {
+    final dx = x2 - x1;
+    final dy = y2 - y1;
+    return sqrt(dx * dx + dy * dy);
   }
 
   Future<void> changeFloor(int floor) async {

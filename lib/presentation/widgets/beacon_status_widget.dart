@@ -88,22 +88,39 @@ class BeaconStatusWidget extends StatelessWidget {
                             const SizedBox(height: 8),
                           ],
                           
-                          // Beacon A Status
-                          _BeaconRow(
-                            label: 'Beacon A (Reception)',
-                            rssi: status?.beaconARssi,
-                            distance: status?.distanceA,
-                            color: Colors.green,
-                          ),
-                          const SizedBox(height: 6),
-                          
-                          // Beacon B Status
-                          _BeaconRow(
-                            label: 'Beacon B (X-Ray)',
-                            rssi: status?.beaconBRssi,
-                            distance: status?.distanceB,
-                            color: Colors.orange,
-                          ),
+                          // Dynamic Beacon List
+                          if (status?.detectedBeacons.isEmpty ?? true)
+                            const Text(
+                              'No beacons detected',
+                              style: TextStyle(
+                                color: Colors.grey,
+                                fontSize: 11,
+                              ),
+                            )
+                          else
+                            ...status!.detectedBeacons.asMap().entries.map((entry) {
+                              final index = entry.key;
+                              final beacon = entry.value;
+                              final colors = [
+                                Colors.green,
+                                Colors.orange,
+                                Colors.blue,
+                                Colors.purple,
+                                Colors.cyan,
+                                Colors.pink,
+                              ];
+                              return Padding(
+                                padding: EdgeInsets.only(
+                                  bottom: index < status.detectedBeacons.length - 1 ? 6 : 0,
+                                ),
+                                child: _BeaconRow(
+                                  rssi: beacon.rssi,
+                                  distance: beacon.distance,
+                                  color: colors[index % colors.length],
+                                  index: index + 1,
+                                ),
+                              );
+                            }).toList(),
                         ],
                       ),
                     );
@@ -154,22 +171,20 @@ class BeaconStatusWidget extends StatelessWidget {
 }
 
 class _BeaconRow extends StatelessWidget {
-  final String label;
-  final int? rssi;
-  final double? distance;
+  final int rssi;
+  final double distance;
   final Color color;
+  final int index;
 
   const _BeaconRow({
-    required this.label,
     required this.rssi,
     required this.distance,
     required this.color,
+    required this.index,
   });
 
   @override
   Widget build(BuildContext context) {
-    final isDetected = rssi != null;
-    
     return Row(
       mainAxisSize: MainAxisSize.min,
       children: [
@@ -178,7 +193,7 @@ class _BeaconRow extends StatelessWidget {
           width: 8,
           height: 8,
           decoration: BoxDecoration(
-            color: isDetected ? color : Colors.grey,
+            color: color,
             shape: BoxShape.circle,
           ),
         ),
@@ -189,29 +204,20 @@ class _BeaconRow extends StatelessWidget {
           crossAxisAlignment: CrossAxisAlignment.start,
           children: [
             Text(
-              label,
-              style: TextStyle(
-                color: isDetected ? Colors.white70 : Colors.grey,
+              'Beacon #$index',
+              style: const TextStyle(
+                color: Colors.white70,
                 fontSize: 10,
               ),
             ),
-            if (isDetected)
-              Text(
-                'RSSI: $rssi dBm | ~${distance?.toStringAsFixed(1)}m',
-                style: const TextStyle(
-                  color: Colors.white,
-                  fontSize: 11,
-                  fontWeight: FontWeight.w500,
-                ),
-              )
-            else
-              const Text(
-                'Not detected',
-                style: TextStyle(
-                  color: Colors.grey,
-                  fontSize: 11,
-                ),
+            Text(
+              'RSSI: $rssi dBm | ~${distance.toStringAsFixed(1)}m',
+              style: const TextStyle(
+                color: Colors.white,
+                fontSize: 11,
+                fontWeight: FontWeight.w500,
               ),
+            ),
           ],
         ),
       ],

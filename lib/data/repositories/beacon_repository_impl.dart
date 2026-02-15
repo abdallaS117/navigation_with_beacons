@@ -1,15 +1,30 @@
+import 'dart:async';
 import '../../domain/entities/beacon_node.dart';
 import '../../domain/entities/navigation_route.dart';
 import '../../domain/repositories/beacon_repository.dart';
+import '../../features/configuration/data/repositories/configuration_repository.dart';
 import '../datasources/hybrid_beacon_datasource.dart';
 
 class BeaconRepositoryImpl implements BeaconRepository {
   final BeaconDataSource dataSource;
+  final ConfigurationRepository configurationRepository;
+  StreamController<BeaconNode?>? _mappedBeaconController;
 
-  BeaconRepositoryImpl(this.dataSource);
+  BeaconRepositoryImpl(this.dataSource, this.configurationRepository) {
+    _mappedBeaconController = StreamController<BeaconNode?>.broadcast();
+    _setupBeaconMapping();
+  }
+
+  void _setupBeaconMapping() {
+    // Datasource already handles beacon-to-node mapping and positioning
+    // Just pass through the beacon stream
+    dataSource.nearestBeaconStream.listen((detectedBeacon) {
+      _mappedBeaconController?.add(detectedBeacon);
+    });
+  }
 
   @override
-  Stream<BeaconNode?> get nearestBeaconStream => dataSource.nearestBeaconStream;
+  Stream<BeaconNode?> get nearestBeaconStream => _mappedBeaconController?.stream ?? dataSource.nearestBeaconStream;
 
   @override
   Future<List<BeaconNode>> getAllBeacons() async {
@@ -37,8 +52,8 @@ class BeaconRepositoryImpl implements BeaconRepository {
   }
 
   @override
-  void simulateBeaconChange(String beaconUid) {
-    dataSource.simulateBeaconChange(beaconUid);
+  Future<void> reloadConfiguration() async {
+    await dataSource.reloadConfiguration();
   }
 
   @override

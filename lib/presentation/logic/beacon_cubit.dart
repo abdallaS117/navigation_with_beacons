@@ -45,16 +45,16 @@ class BeaconCubit extends Cubit<BeaconState> {
     emit(state.copyWith(status: BeaconStatus.initial));
   }
 
-  void simulateBeaconChange(String beaconUid) {
-    _beaconRepository.simulateBeaconChange(beaconUid);
-  }
-
   Future<List<BeaconNode>> getAllBeacons() async {
     return _beaconRepository.getAllBeacons();
   }
 
   Future<List<BeaconNode>> getBeaconsByFloor(int floor) async {
     return _beaconRepository.getBeaconsByFloor(floor);
+  }
+
+  Future<void> reloadConfiguration() async {
+    await _beaconRepository.reloadConfiguration();
   }
 
   @override
