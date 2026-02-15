@@ -68,6 +68,14 @@ class ConfigurationCubit extends Cubit<ConfigurationState> {
     ));
   }
 
+  void selectRoute(String? routeId) {
+    emit(state.copyWith(
+      selectedRouteId: routeId,
+      selectedNodeId: null,
+      selectedBeaconId: null,
+    ));
+  }
+
   // Map Configuration
   Future<void> updateMapConfig(MapLayoutConfig mapConfig) async {
     try {
@@ -117,7 +125,8 @@ class ConfigurationCubit extends Cubit<ConfigurationState> {
       emit(state.copyWith(
         config: updated,
         isDirty: true,
-        mode: ConfigurationMode.view,
+        selectedBeaconId: null, // Deselect the placed beacon
+        // Keep placeBeacon mode active so user can continue placing beacons
       ));
     } catch (e) {
       emit(state.copyWith(
@@ -130,6 +139,39 @@ class ConfigurationCubit extends Cubit<ConfigurationState> {
   Future<void> removeBeacon(String beaconId) async {
     try {
       final updated = await _repository.removeBeacon(beaconId);
+      emit(state.copyWith(
+        config: updated,
+        isDirty: true,
+        selectedBeaconId: null,
+      ));
+    } catch (e) {
+      emit(state.copyWith(
+        status: ConfigurationStatus.error,
+        errorMessage: e.toString(),
+      ));
+    }
+  }
+
+  Future<void> unplaceBeacon(String beaconId) async {
+    try {
+      final config = state.config;
+      if (config == null) return;
+      
+      final beacons = config.beacons.map((b) {
+        if (b.id == beaconId) {
+          return b.copyWith(
+            x: null,
+            y: null,
+            floor: null,
+            isPlaced: false,
+          );
+        }
+        return b;
+      }).toList();
+      
+      final updated = config.copyWith(beacons: beacons);
+      await _repository.saveConfiguration(updated);
+      
       emit(state.copyWith(
         config: updated,
         isDirty: true,
@@ -217,9 +259,84 @@ class ConfigurationCubit extends Cubit<ConfigurationState> {
     }
   }
 
-  Future<void> removeConnection(String fromNodeId, String toNodeId) async {
+  Future<void> removeConnection(String nodeId, String targetNodeId) async {
     try {
-      final updated = await _repository.removeConnection(fromNodeId, toNodeId);
+      final updated = await _repository.removeConnection(nodeId, targetNodeId);
+      emit(state.copyWith(config: updated, isDirty: true));
+    } catch (e) {
+      emit(state.copyWith(
+        status: ConfigurationStatus.error,
+        errorMessage: e.toString(),
+      ));
+    }
+  }
+
+  // Route Creation Methods
+  void startRouteCreation() {
+    emit(state.copyWith(
+      mode: ConfigurationMode.createRoute,
+      routeNodesInProgress: [],
+      routeIdBeingEdited: null,
+    ));
+  }
+
+  void addNodeToRoute(String nodeId) {
+    if (state.routeNodesInProgress.contains(nodeId)) return;
+    
+    final updatedNodes = List<String>.from(state.routeNodesInProgress)..add(nodeId);
+    emit(state.copyWith(routeNodesInProgress: updatedNodes));
+  }
+
+  void removeNodeFromRoute(String nodeId) {
+    final updatedNodes = state.routeNodesInProgress.where((id) => id != nodeId).toList();
+    emit(state.copyWith(routeNodesInProgress: updatedNodes));
+  }
+
+  void clearRouteInProgress() {
+    emit(state.copyWith(
+      routeNodesInProgress: [],
+      mode: ConfigurationMode.view,
+      routeIdBeingEdited: null,
+    ));
+  }
+
+  Future<void> saveRoute(String name, String? description, RouteType type) async {
+    if (state.routeNodesInProgress.length < 2) {
+      emit(state.copyWith(
+        status: ConfigurationStatus.error,
+        errorMessage: 'Route must have at least 2 nodes',
+      ));
+      return;
+    }
+
+    try {
+      final route = RouteConfig(
+        id: 'route_${DateTime.now().millisecondsSinceEpoch}',
+        name: name,
+        description: description,
+        nodeIds: state.routeNodesInProgress,
+        type: type,
+      );
+
+      final updated = await _repository.upsertRoute(route);
+      emit(state.copyWith(
+        config: updated,
+        isDirty: true,
+        routeNodesInProgress: [],
+        mode: ConfigurationMode.view,
+        routeIdBeingEdited: null,
+      ));
+    } catch (e) {
+      emit(state.copyWith(
+        status: ConfigurationStatus.error,
+        errorMessage: e.toString(),
+      ));
+    }
+  }
+
+  Future<void> deleteRoute(String routeId) async {
+    try {
+      final updated = await _repository.removeRoute(routeId);
       emit(state.copyWith(config: updated, isDirty: true));
     } catch (e) {
       emit(state.copyWith(

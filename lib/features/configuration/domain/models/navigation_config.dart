@@ -94,6 +94,12 @@ class NavigationConfig extends Equatable {
         name: 'Hospital Layout',
         width: 800,
         height: 600,
+        floors: [
+          FloorConfig(
+            floorNumber: 1,
+            name: 'Floor 1',
+          ),
+        ],
       ),
     );
   }

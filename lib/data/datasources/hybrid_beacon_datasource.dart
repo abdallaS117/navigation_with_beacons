@@ -5,7 +5,9 @@ import 'package:flutter_blue_plus/flutter_blue_plus.dart';
 import 'package:permission_handler/permission_handler.dart';
 import '../../domain/entities/beacon_node.dart';
 import '../../domain/entities/navigation_route.dart';
-import '../providers/static_beacon_configuration.dart';
+import '../../features/configuration/data/repositories/configuration_repository.dart';
+import '../../features/configuration/domain/models/configurable_beacon.dart';
+import '../../features/configuration/domain/models/configurable_node.dart';
 
 // Abstract interface for beacon data sources
 abstract class BeaconDataSource {
@@ -15,28 +17,36 @@ abstract class BeaconDataSource {
   List<BeaconNode> getBeaconsByFloor(int floor);
   Future<void> startScanning();
   void stopScanning();
+  Future<void> reloadConfiguration();
   void dispose();
 }
 
+class DetectedBeacon {
+  final String beaconId;
+  final int rssi;
+  final double distance;
+
+  const DetectedBeacon({
+    required this.beaconId,
+    required this.rssi,
+    required this.distance,
+  });
+}
+
 class BeaconStatus {
-  final int? beaconARssi;
-  final int? beaconBRssi;
-  final double? distanceA;
-  final double? distanceB;
+  final List<DetectedBeacon> detectedBeacons;
   final bool isScanning;
   final String? currentLocation;
 
   const BeaconStatus({
-    this.beaconARssi,
-    this.beaconBRssi,
-    this.distanceA,
-    this.distanceB,
+    this.detectedBeacons = const [],
     this.isScanning = false,
     this.currentLocation,
   });
 }
 
 class HybridBeaconDataSource implements BeaconDataSource {
+  final ConfigurationRepository configurationRepository;
   final _beaconController = StreamController<BeaconNode?>.broadcast();
   final _statusController = StreamController<BeaconStatus>.broadcast();
   StreamSubscription<List<ScanResult>>? _scanSubscription;
@@ -45,20 +55,55 @@ class HybridBeaconDataSource implements BeaconDataSource {
   BluetoothAdapterState _adapterState = BluetoothAdapterState.unknown;
   bool _initialized = false;
 
-  // Beacon UUIDs from centralized configuration
-  static String get beaconAUuid => StaticBeaconConfiguration.beaconAUuid;
-  static String get beaconBUuid => StaticBeaconConfiguration.beaconBUuid;
+  // Dynamic beacon configuration loaded from ConfigurationRepository
+  List<ConfigurableBeacon> _configuredBeacons = [];
+  List<BeaconNode> _navigationNodes = [];
+  Map<String, String> _beaconUuidToNodeId = {}; // Maps beacon UUID to node ID
 
-  // Beacon nodes from centralized configuration
-  static BeaconNode get beaconANode => StaticBeaconConfiguration.navigationNodes
-      .firstWhere((n) => n.uid == 'beacon_reception');
-  static BeaconNode get beaconBNode => StaticBeaconConfiguration.navigationNodes
-      .firstWhere((n) => n.uid == 'beacon_xray');
+  HybridBeaconDataSource(this.configurationRepository) {
+    _loadConfiguration();
+  }
 
-  int? _beaconARssi;
-  int? _beaconBRssi;
-  DateTime? _lastBeaconATime;
-  DateTime? _lastBeaconBTime;
+  Future<void> reloadConfiguration() async {
+    await _loadConfiguration();
+  }
+
+  Future<void> _loadConfiguration() async {
+    try {
+      final config = await configurationRepository.getConfiguration();
+      _configuredBeacons = config.beacons;
+      
+      // Convert configured nodes to BeaconNodes for navigation
+      _navigationNodes = config.nodes.map((node) {
+        return BeaconNode(
+          uid: node.id,
+          name: node.name,
+          x: node.x,
+          y: node.y,
+          floor: node.floor,
+          departmentId: node.type.name,
+          connectedNodes: node.connections.map((conn) => conn.targetNodeId).toList(),
+        );
+      }).toList();
+      
+      // Build mapping of beacon UUID to node ID
+      for (final node in config.nodes) {
+        if (node.linkedBeaconId != null) {
+          _beaconUuidToNodeId[node.linkedBeaconId!] = node.id;
+          debugPrint('🔗 MAPPING: beacon "${node.linkedBeaconId}" → node "${node.id}" (${node.name}) at (${node.x}, ${node.y})');
+        }
+      }
+      
+      debugPrint('✅ Loaded ${_configuredBeacons.length} beacons and ${_navigationNodes.length} nodes from configuration');
+      debugPrint('📍 Beacon-to-node mappings: $_beaconUuidToNodeId');
+    } catch (e) {
+      debugPrint('⚠️ Failed to load configuration: $e');
+    }
+  }
+
+  // Dynamic beacon tracking - maps beacon UUID to RSSI and timestamp
+  final Map<String, int> _beaconRssiMap = {};
+  final Map<String, DateTime> _beaconLastSeenMap = {};
   
   // RSSI Kalman filter state for each beacon
   double? _kalmanARssi;
@@ -102,8 +147,8 @@ class HybridBeaconDataSource implements BeaconDataSource {
   NavigationRoute? _activeRoute;
   int _currentRouteSegmentIndex = 0;  // Which segment of the route we're on
 
-  // Navigation nodes from centralized configuration
-  List<BeaconNode> get _allBeacons => StaticBeaconConfiguration.navigationNodes;
+  // Navigation nodes from dynamic configuration
+  List<BeaconNode> get _allBeacons => _navigationNodes;
 
   @override
   Stream<BeaconNode?> get nearestBeaconStream => _beaconController.stream;
@@ -258,42 +303,39 @@ class HybridBeaconDataSource implements BeaconDataSource {
           final rssi = result.rssi;
           final normalizedUuid = uuid.toUpperCase();
           
-          if (normalizedUuid == beaconAUuid.toUpperCase()) {
-            final filteredRssi = _applyKalmanFilter(rssi, true);
-            _beaconARssi = filteredRssi.round();
-            _lastBeaconATime = now;
-          } else if (normalizedUuid == beaconBUuid.toUpperCase()) {
-            final filteredRssi = _applyKalmanFilter(rssi, false);
-            _beaconBRssi = filteredRssi.round();
-            _lastBeaconBTime = now;
+          // Extract major and minor from iBeacon data (bytes 18-19 = major, bytes 20-21 = minor)
+          final major = (data[18] << 8) + data[19];
+          final minor = (data[20] << 8) + data[21];
+          
+          // Build beacon ID with actual major/minor values (matches format from beacon_scanner_dialog)
+          final beaconId = 'beacon_${normalizedUuid.replaceAll('-', '')}_${major}_$minor';
+          debugPrint('🔍 Scanned beacon: UUID=$normalizedUuid, Major=$major, Minor=$minor → beaconId=$beaconId');
+          
+          if (_beaconUuidToNodeId.containsKey(beaconId)) {
+            _beaconRssiMap[beaconId] = rssi;
+            _beaconLastSeenMap[beaconId] = now;
+            final nodeId = _beaconUuidToNodeId[beaconId];
+            debugPrint('✅ MATCH! Beacon $beaconId → Node $nodeId, RSSI: $rssi');
+          } else {
+            debugPrint('❌ NO MATCH for beaconId: $beaconId');
+            debugPrint('   Available mappings: ${_beaconUuidToNodeId.keys.toList()}');
           }
         }
       }
     }
 
-    // Clear stale beacons (longer timeout for stability)
-    if (_lastBeaconATime != null && now.difference(_lastBeaconATime!).inSeconds > 10) {
-      _beaconARssi = null;
-      _distanceABuffer.clear();
-      _rssiABuffer.clear();
-      _kalmanARssi = null;
-      _kalmanAVariance = 1.0;
-      _confidenceA = 0.0;
-      debugPrint('🔴 Beacon A stale, clearing');
-    }
-    if (_lastBeaconBTime != null && now.difference(_lastBeaconBTime!).inSeconds > 10) {
-      _beaconBRssi = null;
-      _distanceBBuffer.clear();
-      _rssiBBuffer.clear();
-      _kalmanBRssi = null;
-      _kalmanBVariance = 1.0;
-      _confidenceB = 0.0;
-      debugPrint('🔴 Beacon B stale, clearing');
-    }
-    // Reset position smoothing if both beacons are lost
-    if (_beaconARssi == null && _beaconBRssi == null) {
-      _smoothedX = null;
-      _smoothedY = null;
+    // Clear stale beacons
+    final staleBeacons = <String>[];
+    _beaconLastSeenMap.forEach((beaconId, lastSeen) {
+      if (now.difference(lastSeen).inSeconds > 10) {
+        staleBeacons.add(beaconId);
+      }
+    });
+    
+    for (final beaconId in staleBeacons) {
+      _beaconRssiMap.remove(beaconId);
+      _beaconLastSeenMap.remove(beaconId);
+      debugPrint('🔴 Beacon $beaconId stale, clearing');
     }
   }
 
@@ -366,140 +408,199 @@ class HybridBeaconDataSource implements BeaconDataSource {
   }
 
   void _calculateInterpolatedPosition() {
-    // Convert RSSI to raw distance
-    final rawDistanceA = _beaconARssi != null ? _rssiToDistance(_beaconARssi!) : null;
-    final rawDistanceB = _beaconBRssi != null ? _rssiToDistance(_beaconBRssi!) : null;
-    
-    // Add to distance buffers for median filtering
-    if (rawDistanceA != null) {
-      _distanceABuffer.add(rawDistanceA);
-      if (_distanceABuffer.length > _distanceBufferSize) {
-        _distanceABuffer.removeAt(0);
-      }
-    }
-    if (rawDistanceB != null) {
-      _distanceBBuffer.add(rawDistanceB);
-      if (_distanceBBuffer.length > _distanceBufferSize) {
-        _distanceBBuffer.removeAt(0);
-      }
-    }
-    
-    // Use median-filtered distances (production-ready smoothing)
-    final distanceA = _distanceABuffer.isNotEmpty ? _medianFilter(_distanceABuffer) : null;
-    final distanceB = _distanceBBuffer.isNotEmpty ? _medianFilter(_distanceBBuffer) : null;
-    
-    String? currentLocation;
-
-    if (distanceA == null && distanceB == null) {
-      currentLocation = 'Searching for beacons...';
-      _emitStatus(distanceA, distanceB, currentLocation);
+    // Check if any beacons are detected
+    if (_beaconRssiMap.isEmpty) {
+      _emitStatus(null, null, 'Searching for beacons...');
       return;
     }
 
-    // Determine nearest beacon with hysteresis and anti-flicker logic
-    final nearestBeacon = _determineNearestBeaconWithHysteresis(distanceA, distanceB);
+    // Build a map of node IDs to their RSSI values and distances
+    final nodeRssiMap = <String, int>{};
+    final nodeDistanceMap = <String, double>{};
     
-    // ============ SNAP-TO-ROUTE MODE ============
-    // When navigating with an active route, constrain position to the route path
+    _beaconRssiMap.forEach((beaconId, rssi) {
+      final nodeId = _beaconUuidToNodeId[beaconId];
+      if (nodeId != null) {
+        // Keep the strongest RSSI for each node (in case multiple beacons map to same node)
+        if (!nodeRssiMap.containsKey(nodeId) || rssi > nodeRssiMap[nodeId]!) {
+          nodeRssiMap[nodeId] = rssi;
+          nodeDistanceMap[nodeId] = _rssiToDistance(rssi);
+        }
+      }
+    });
+    
+    if (nodeRssiMap.isEmpty) {
+      _emitStatus(null, null, 'No mapped beacons detected');
+      return;
+    }
+
+    // IF NAVIGATION IS ACTIVE: Use route-constrained positioning
     if (_activeRoute != null && _activeRoute!.nodes.length >= 2) {
-      final routePosition = _calculateRoutePosition(distanceA, distanceB);
+      final routePosition = _calculateRouteConstrainedPosition(nodeDistanceMap);
       if (routePosition != null) {
-        currentLocation = 'On route - A: ${distanceA?.toStringAsFixed(1) ?? "?"}m, B: ${distanceB?.toStringAsFixed(1) ?? "?"}m';
-        _emitStatus(distanceA, distanceB, currentLocation);
+        _emitStatus(nodeDistanceMap.values.isNotEmpty ? nodeDistanceMap.values.first : null, null, 'On Route');
         _emitPosition(routePosition);
         return;
       }
     }
     
-    // ============ FREE POSITIONING MODE ============
-    // When no active route, use beacon-based interpolation
-    if (distanceA != null && distanceB != null) {
-      // SNAP TO BEACON: If distance < 1m, place marker exactly on the beacon
-      if (distanceA < 1.0 && distanceA < distanceB) {
-        // Very close to Beacon A - snap to it
-        _smoothedX = beaconANode.x;
-        _smoothedY = beaconANode.y;
-        currentLocation = 'At Reception (Beacon A) - A: ${distanceA.toStringAsFixed(1)}m, B: ${distanceB.toStringAsFixed(1)}m';
-        _emitStatus(distanceA, distanceB, currentLocation);
-        _emitPosition(beaconANode);
-        return;
-      } else if (distanceB < 1.0 && distanceB < distanceA) {
-        // Very close to Beacon B - snap to it
-        _smoothedX = beaconBNode.x;
-        _smoothedY = beaconBNode.y;
-        currentLocation = 'At X-Ray (Beacon B) - A: ${distanceA.toStringAsFixed(1)}m, B: ${distanceB.toStringAsFixed(1)}m';
-        _emitStatus(distanceA, distanceB, currentLocation);
-        _emitPosition(beaconBNode);
-        return;
+    // FALLBACK: Snap to nearest beacon's node position
+    String? nearestNodeId;
+    int strongestRssi = -200;
+    
+    nodeRssiMap.forEach((nodeId, rssi) {
+      if (rssi > strongestRssi) {
+        strongestRssi = rssi;
+        nearestNodeId = nodeId;
       }
-      
-      // Calculate confidence based on signal strength (stronger = more confident)
-      // RSSI closer to 0 is stronger, so we invert and normalize
-      _confidenceA = _beaconARssi != null ? (100 + _beaconARssi!) / 100.0 : 0.5;
-      _confidenceB = _beaconBRssi != null ? (100 + _beaconBRssi!) / 100.0 : 0.5;
-      _confidenceA = _confidenceA.clamp(0.1, 1.0);
-      _confidenceB = _confidenceB.clamp(0.1, 1.0);
-      
-      // Weighted positioning: closer beacon with stronger signal has more influence
-      // Weight = confidence / distance (closer + stronger = higher weight)
-      final weightA = _confidenceA / (distanceA + 0.1);  // +0.1 prevents division by zero
-      final weightB = _confidenceB / (distanceB + 0.1);
-      final totalWeight = weightA + weightB;
-      
-      // Ratio based on weighted distances (0 = at A, 1 = at B)
-      final ratio = (weightB / totalWeight).clamp(0.0, 1.0);
-      
-      final rawX = beaconANode.x + (beaconBNode.x - beaconANode.x) * ratio;
-      final rawY = beaconANode.y + (beaconBNode.y - beaconANode.y) * ratio;
-      
-      // Apply exponential moving average for smooth position transitions
-      if (_smoothedX == null || _smoothedY == null) {
-        _smoothedX = rawX;
-        _smoothedY = rawY;
-      } else {
-        _smoothedX = _smoothedX! + _positionSmoothingFactor * (rawX - _smoothedX!);
-        _smoothedY = _smoothedY! + _positionSmoothingFactor * (rawY - _smoothedY!);
-      }
-      
-      final interpolatedNode = BeaconNode(
-        uid: 'interpolated',
-        name: nearestBeacon == 'A' ? 'Near Reception' : (nearestBeacon == 'B' ? 'Near X-Ray' : 'Between beacons'),
-        x: _smoothedX!,
-        y: _smoothedY!,
-        floor: 1,
-        departmentId: nearestBeacon == 'A' ? 'reception' : (nearestBeacon == 'B' ? 'xray' : ''),
-        connectedNodes: [],
-      );
-      
-      if (nearestBeacon == 'A') {
-        currentLocation = 'At Reception (Beacon A) - A: ${distanceA.toStringAsFixed(1)}m, B: ${distanceB.toStringAsFixed(1)}m';
-      } else if (nearestBeacon == 'B') {
-        currentLocation = 'At X-Ray (Beacon B) - A: ${distanceA.toStringAsFixed(1)}m, B: ${distanceB.toStringAsFixed(1)}m';
-      } else {
-        currentLocation = 'Between beacons - A: ${distanceA.toStringAsFixed(1)}m, B: ${distanceB.toStringAsFixed(1)}m';
-      }
-      
-      _emitStatus(distanceA, distanceB, currentLocation);
-      _emitPosition(interpolatedNode);
-    } else if (distanceA != null && distanceB == null) {
-      // Only Beacon A detected - position at beacon A
-      currentLocation = 'At Reception (Beacon A only) - A: ${distanceA.toStringAsFixed(1)}m';
-      _emitStatus(distanceA, distanceB, currentLocation);
-      _emitPosition(beaconANode);
-    } else if (distanceB != null && distanceA == null) {
-      // Only Beacon B detected - position at beacon B
-      currentLocation = 'At X-Ray (Beacon B only) - B: ${distanceB.toStringAsFixed(1)}m';
-      _emitStatus(distanceA, distanceB, currentLocation);
-      _emitPosition(beaconBNode);
+    });
+    
+    if (nearestNodeId == null) {
+      _emitStatus(null, null, 'No beacons detected');
+      return;
     }
+    
+    // Find the node in navigation nodes
+    final node = _navigationNodes.firstWhere(
+      (n) => n.uid == nearestNodeId,
+      orElse: () => _navigationNodes.first,
+    );
+    
+    // Calculate distance from RSSI
+    final distance = _rssiToDistance(strongestRssi);
+    final currentLocation = '${node.name} - ${distance.toStringAsFixed(1)}m';
+    
+    // Emit the nearest beacon position
+    final beaconNode = BeaconNode(
+      uid: nearestNodeId!,
+      name: node.name,
+      x: node.x,
+      y: node.y,
+      floor: node.floor,
+      departmentId: node.departmentId,
+      connectedNodes: node.connectedNodes,
+    );
+    
+    _emitStatus(distance, null, currentLocation);
+    _emitPosition(beaconNode);
+  }
+  
+  /// Calculate position constrained to the active route
+  /// Follows the EXACT route path through all waypoints/turns
+  /// Uses distance to start and end beacons to calculate progress along total route
+  BeaconNode? _calculateRouteConstrainedPosition(Map<String, double> nodeDistanceMap) {
+    if (_activeRoute == null) return null;
+    
+    final routeNodes = _activeRoute!.nodes;
+    if (routeNodes.length < 2) return null;
+    
+    // Get the start and end nodes of the route (they should have beacons)
+    final startNode = routeNodes.first;
+    final endNode = routeNodes.last;
+    
+    // Get distances to start and end beacons
+    final distToStart = nodeDistanceMap[startNode.uid];
+    final distToEnd = nodeDistanceMap[endNode.uid];
+    
+    // We need at least one distance measurement
+    if (distToStart == null && distToEnd == null) {
+      debugPrint('📍 No start/end beacons detected, falling back');
+      return null;
+    }
+    
+    // Calculate cumulative distances along the route (following all segments)
+    double totalRouteLength = 0;
+    final cumulativeLengths = <double>[0]; // Distance from start to each node
+    
+    for (int i = 1; i < routeNodes.length; i++) {
+      final segmentLength = _calculateNodeDistance(routeNodes[i - 1], routeNodes[i]);
+      totalRouteLength += segmentLength;
+      cumulativeLengths.add(totalRouteLength);
+    }
+    
+    if (totalRouteLength < 1.0) return routeNodes.first;
+    
+    // Calculate progress along route (0 = at start, 1 = at end)
+    double progress;
+    
+    if (distToStart != null && distToEnd != null) {
+      // Both beacons detected - use ratio of distances
+      final totalDistance = distToStart + distToEnd;
+      if (totalDistance > 0) {
+        // Closer to start (smaller distToStart) = closer to 0
+        // Closer to end (smaller distToEnd) = closer to 1
+        progress = (distToStart / totalDistance).clamp(0.0, 1.0);
+      } else {
+        progress = 0.5;
+      }
+    } else if (distToStart != null) {
+      // Only start beacon detected - estimate based on distance
+      // Assume max reasonable indoor distance is ~20m
+      progress = (distToStart / 20.0).clamp(0.0, 1.0);
+    } else {
+      // Only end beacon detected
+      progress = 1.0 - (distToEnd! / 20.0).clamp(0.0, 1.0);
+    }
+    
+    // Convert progress to actual position along the route (following all segments)
+    final targetDistance = progress * totalRouteLength;
+    
+    // Find which segment we're on
+    int segmentIndex = 0;
+    for (int i = 1; i < cumulativeLengths.length; i++) {
+      if (targetDistance <= cumulativeLengths[i]) {
+        segmentIndex = i - 1;
+        break;
+      }
+      segmentIndex = routeNodes.length - 2; // Last segment
+    }
+    
+    // Calculate position EXACTLY on this segment
+    final segmentStart = routeNodes[segmentIndex];
+    final segmentEnd = routeNodes[min(segmentIndex + 1, routeNodes.length - 1)];
+    final segmentStartDist = cumulativeLengths[segmentIndex];
+    final segmentLength = _calculateNodeDistance(segmentStart, segmentEnd);
+    
+    double segmentProgress = 0;
+    if (segmentLength > 0) {
+      segmentProgress = ((targetDistance - segmentStartDist) / segmentLength).clamp(0.0, 1.0);
+    }
+    
+    // Interpolate position EXACTLY on segment - follows the path precisely
+    final x = segmentStart.x + (segmentEnd.x - segmentStart.x) * segmentProgress;
+    final y = segmentStart.y + (segmentEnd.y - segmentStart.y) * segmentProgress;
+    
+    debugPrint('📍 Route: ${(progress * 100).toStringAsFixed(0)}% total, segment ${segmentIndex + 1}/${routeNodes.length - 1}: ${segmentStart.name} → ${segmentEnd.name}');
+    
+    _currentRouteSegmentIndex = segmentIndex;
+    
+    return BeaconNode(
+      uid: 'route_position',
+      name: 'On Route: ${segmentStart.name} → ${segmentEnd.name}',
+      x: x,
+      y: y,
+      floor: segmentStart.floor,
+      departmentId: '',
+      connectedNodes: [],
+    );
   }
 
   void _emitStatus(double? distanceA, double? distanceB, String? location) {
+    final detectedBeacons = <DetectedBeacon>[];
+    
+    _beaconRssiMap.forEach((beaconId, rssi) {
+      final distance = _rssiToDistance(rssi);
+      detectedBeacons.add(DetectedBeacon(
+        beaconId: beaconId,
+        rssi: rssi,
+        distance: distance,
+      ));
+    });
+    
+    detectedBeacons.sort((a, b) => b.rssi.compareTo(a.rssi));
+    
     _statusController.add(BeaconStatus(
-      beaconARssi: _beaconARssi,
-      beaconBRssi: _beaconBRssi,
-      distanceA: distanceA,
-      distanceB: distanceB,
+      detectedBeacons: detectedBeacons,
       isScanning: _isScanning,
       currentLocation: location,
     ));
@@ -633,25 +734,15 @@ class HybridBeaconDataSource implements BeaconDataSource {
     _fallbackTimer?.cancel();
     _fallbackTimer = null;
     FlutterBluePlus.stopScan();
-    _beaconARssi = null;
-    _beaconBRssi = null;
+    _beaconRssiMap.clear();
+    _beaconLastSeenMap.clear();
     _distanceABuffer.clear();
     _distanceBBuffer.clear();
     _rssiABuffer.clear();
     _rssiBBuffer.clear();
-    _kalmanARssi = null;
-    _kalmanBRssi = null;
-    _kalmanAVariance = 1.0;
-    _kalmanBVariance = 1.0;
-    _smoothedX = null;
-    _smoothedY = null;
-    _confidenceA = 0.0;
-    _confidenceB = 0.0;
     _currentNearestBeacon = null;
     _pendingNearestBeacon = null;
     _pendingConfirmationCount = 0;
-    _lastBeaconATime = null;
-    _lastBeaconBTime = null;
     debugPrint('🛑 Beacon scan stopped');
   }
 
@@ -663,10 +754,7 @@ class HybridBeaconDataSource implements BeaconDataSource {
   }
 
   Map<String, int?> getCurrentRssiValues() {
-    return {
-      'beaconA': _beaconARssi,
-      'beaconB': _beaconBRssi,
-    };
+    return Map<String, int?>.from(_beaconRssiMap);
   }
 
   bool get isUsingRealBeacons => true;

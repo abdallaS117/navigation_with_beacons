@@ -37,9 +37,16 @@ class HospitalNavigationApp extends StatelessWidget {
   Widget build(BuildContext context) {
     return MultiRepositoryProvider(
       providers: [
+        // Configuration Repository (must come first)
+        RepositoryProvider<ConfigurationRepository>(
+          create: (_) => ConfigurationRepository(LocalConfigurationStorageService()),
+        ),
+        
         // Data sources
         RepositoryProvider<HybridBeaconDataSource>(
-          create: (_) => HybridBeaconDataSource(),
+          create: (context) => HybridBeaconDataSource(
+            context.read<ConfigurationRepository>(),
+          ),
         ),
         RepositoryProvider<StaticMapDataSource>(
           create: (_) => StaticMapDataSource(),
@@ -49,12 +56,14 @@ class HospitalNavigationApp extends StatelessWidget {
         RepositoryProvider<BeaconRepositoryImpl>(
           create: (context) => BeaconRepositoryImpl(
             context.read<HybridBeaconDataSource>(),
+            context.read<ConfigurationRepository>(),
           ),
         ),
         RepositoryProvider<NavigationRepositoryImpl>(
           create: (context) => NavigationRepositoryImpl(
             mapDataSource: context.read<StaticMapDataSource>(),
             beaconDataSource: context.read<HybridBeaconDataSource>(),
+            configurationRepository: context.read<ConfigurationRepository>(),
           ),
         ),
       ],
@@ -72,8 +81,8 @@ class HospitalNavigationApp extends StatelessWidget {
             ),
           ),
           BlocProvider<ConfigurationCubit>(
-            create: (_) => ConfigurationCubit(
-              ConfigurationRepository(LocalConfigurationStorageService()),
+            create: (context) => ConfigurationCubit(
+              context.read<ConfigurationRepository>(),
             )..loadConfiguration(),
           ),
         ],

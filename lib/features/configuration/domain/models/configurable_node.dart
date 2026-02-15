@@ -149,7 +149,8 @@ class NodeConnection extends Equatable {
 
 enum ConnectionType {
   normal,
+  emergency,
+  staff,
   stairs,
   elevator,
-  restricted,
 }

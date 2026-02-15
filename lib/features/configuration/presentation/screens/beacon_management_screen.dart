@@ -4,6 +4,7 @@ import '../../domain/models/models.dart';
 import '../logic/configuration_cubit.dart';
 import '../logic/configuration_state.dart';
 import '../widgets/beacon_editor_dialog.dart';
+import '../widgets/beacon_scanner_dialog.dart';
 
 class BeaconManagementScreen extends StatelessWidget {
   const BeaconManagementScreen({super.key});
@@ -204,12 +205,34 @@ class BeaconManagementScreen extends StatelessWidget {
     );
   }
 
-  void _scanForBeacons(BuildContext context) {
-    ScaffoldMessenger.of(context).showSnackBar(
-      const SnackBar(
-        content: Text('Beacon scanning - Coming soon!'),
-        duration: Duration(seconds: 2),
+  void _scanForBeacons(BuildContext context) async {
+    final state = context.read<ConfigurationCubit>().state;
+    final existingBeacons = state.config?.beacons ?? [];
+    
+    final result = await showDialog<List<ConfigurableBeacon>>(
+      context: context,
+      barrierDismissible: false,
+      builder: (_) => BeaconScannerDialog(
+        existingBeacons: existingBeacons,
       ),
     );
+
+    if (result != null && result.isNotEmpty && context.mounted) {
+      debugPrint('🟢 Adding ${result.length} beacons from scanner');
+      for (final beacon in result) {
+        debugPrint('🟢 Adding beacon: ${beacon.id} (${beacon.name})');
+        await context.read<ConfigurationCubit>().addBeacon(beacon);
+        debugPrint('🟢 Beacon added successfully');
+      }
+      
+      if (context.mounted) {
+        ScaffoldMessenger.of(context).showSnackBar(
+          SnackBar(
+            content: Text('Added ${result.length} beacon(s)'),
+            backgroundColor: Colors.green,
+          ),
+        );
+      }
+    }
   }
 }

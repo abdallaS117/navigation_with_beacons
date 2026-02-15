@@ -53,6 +53,10 @@ class BeaconCubit extends Cubit<BeaconState> {
     return _beaconRepository.getBeaconsByFloor(floor);
   }
 
+  Future<void> reloadConfiguration() async {
+    await _beaconRepository.reloadConfiguration();
+  }
+
   @override
   Future<void> close() {
     _beaconSubscription?.cancel();

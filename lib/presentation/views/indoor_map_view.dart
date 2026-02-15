@@ -1,3 +1,4 @@
+import 'dart:io';
 import 'package:flutter/material.dart';
 import 'package:flutter_bloc/flutter_bloc.dart';
 import '../../domain/entities/beacon_node.dart';
@@ -50,13 +51,15 @@ class _IndoorMapViewState extends State<IndoorMapView>
 
     // Initialize navigation and start beacon scanning
     WidgetsBinding.instance.addPostFrameCallback((_) {
+      context.read<ConfigurationCubit>().loadConfiguration();
       context.read<NavigationCubit>().initialize();
       context.read<BeaconCubit>().startScanning();
 
       // Center the map initially
       final screenSize = MediaQuery.of(context).size;
-      final mapWidth = AppConstants.mapWidth;
-      final mapHeight = AppConstants.mapHeight;
+      final config = context.read<ConfigurationCubit>().state.config;
+      final mapWidth = config?.mapConfig.width ?? AppConstants.mapWidth;
+      final mapHeight = config?.mapConfig.height ?? AppConstants.mapHeight;
 
       // Calculate center offset
       // We want the center of the map (mapWidth/2, mapHeight/2)
@@ -113,8 +116,8 @@ class _IndoorMapViewState extends State<IndoorMapView>
       ..scale(scale);
   }
 
-  void _openConfiguration(BuildContext context) {
-    Navigator.push(
+  void _openConfiguration(BuildContext context) async {
+    await Navigator.push(
       context,
       MaterialPageRoute(
         builder: (_) => BlocProvider.value(
@@ -123,6 +126,11 @@ class _IndoorMapViewState extends State<IndoorMapView>
         ),
       ),
     );
+    
+    if (context.mounted) {
+      await context.read<BeaconCubit>().reloadConfiguration();
+      await context.read<NavigationCubit>().initialize();
+    }
   }
 
   @override
@@ -146,8 +154,65 @@ class _IndoorMapViewState extends State<IndoorMapView>
         }
       },
       child: Scaffold(
-        body: BlocConsumer<NavigationCubit, NavigationState>(
-          listener: (context, state) {
+        body: BlocListener<ConfigurationCubit, ConfigurationState>(
+          listenWhen: (previous, current) {
+            // Listen when configuration is saved
+            return previous.status != ConfigurationStatus.saved && 
+                   current.status == ConfigurationStatus.saved;
+          },
+          listener: (context, configState) async {
+            // Reload beacon and navigation data when configuration is saved
+            await context.read<BeaconCubit>().reloadConfiguration();
+            await context.read<NavigationCubit>().initialize();
+          },
+          child: BlocConsumer<NavigationCubit, NavigationState>(
+            listenWhen: (previous, current) {
+              // Listen when error message changes or when arrived status changes
+              return previous.errorMessage != current.errorMessage ||
+                     (previous.status != NavigationStatus.arrived && current.status == NavigationStatus.arrived);
+            },
+            listener: (context, state) {
+            // Handle arrival at destination
+            if (state.status == NavigationStatus.arrived) {
+              ScaffoldMessenger.of(context).clearSnackBars();
+              ScaffoldMessenger.of(context).showSnackBar(
+                SnackBar(
+                  content: Row(
+                    children: [
+                      const Icon(Icons.check_circle, color: Colors.white),
+                      const SizedBox(width: 12),
+                      Expanded(
+                        child: Column(
+                          mainAxisSize: MainAxisSize.min,
+                          crossAxisAlignment: CrossAxisAlignment.start,
+                          children: [
+                            const Text(
+                              'You have arrived!',
+                              style: TextStyle(fontWeight: FontWeight.bold, fontSize: 16),
+                            ),
+                            Text(
+                              'Destination: ${state.selectedDestination?.name ?? ""}',
+                              style: const TextStyle(fontSize: 13),
+                            ),
+                          ],
+                        ),
+                      ),
+                    ],
+                  ),
+                  backgroundColor: Colors.green,
+                  duration: const Duration(seconds: 10),
+                  action: SnackBarAction(
+                    label: 'Finish',
+                    textColor: Colors.white,
+                    onPressed: () {
+                      context.read<NavigationCubit>().cancelNavigation();
+                    },
+                  ),
+                ),
+              );
+            }
+            
+            // Handle error messages
             if (state.errorMessage != null) {
               ScaffoldMessenger.of(context).showSnackBar(
                 SnackBar(
@@ -165,140 +230,168 @@ class _IndoorMapViewState extends State<IndoorMapView>
           }
         },
         builder: (context, navState) {
-          return BlocBuilder<BeaconCubit, BeaconState>(
-            builder: (context, beaconState) {
-              return Stack(
-                children: [
-                  // Map with interactive viewer
-                  _buildMap(navState, beaconState),
+          return BlocBuilder<ConfigurationCubit, ConfigurationState>(
+            builder: (context, configState) {
+              return BlocBuilder<BeaconCubit, BeaconState>(
+                builder: (context, beaconState) {
+                  return Stack(
+                    children: [
+                      // Map with interactive viewer
+                      _buildMap(navState, beaconState, configState),
 
-                  // Top bar with info
-                  _buildTopBar(navState, beaconState),
+                      // Top bar with info
+                      _buildTopBar(navState, beaconState),
 
-                  // Floor selector
-                  Positioned(
-                    top: MediaQuery.of(context).padding.top + 90,
-                    left: 16,
-                    child: FloorSelector(
-                      currentFloor: navState.currentFloor,
-                      floors: const [1, 2, 3],
-                      highlightedFloors: navState.currentRoute?.floorsInRoute,
-                      onFloorSelected: (floor) {
-                        context.read<NavigationCubit>().changeFloor(floor);
-                      },
-                    ),
-                  ),
-
-                  // Beacon Status Widget
-                  Positioned(
-                    top: MediaQuery.of(context).padding.top + 90,
-                    right: 16,
-                    child: BeaconStatusWidget(
-                      statusStream: context.read<HybridBeaconDataSource>().beaconStatusStream,
-                      isVisible: _showBeaconStatus,
-                      onToggle: () {
-                        setState(() {
-                          _showBeaconStatus = !_showBeaconStatus;
-                        });
-                      },
-                    ),
-                  ),
-
-                  // Configuration Button
-                  Positioned(
-                    right: 16,
-                    bottom: (navState.selectedDestination != null ? 270 : 150) +
-                        MediaQuery.of(context).padding.bottom,
-                    child: FloatingActionButton.small(
-                      heroTag: 'config',
-                      backgroundColor: Colors.white,
-                      foregroundColor: Colors.grey[700],
-                      onPressed: () => _openConfiguration(context),
-                      child: const Icon(Icons.settings),
-                    ),
-                  ),
-
-                  // Center on User Button
-                  Positioned(
-                    right: 16,
-                    bottom: (navState.selectedDestination != null ? 220 : 100) +
-                        MediaQuery.of(context).padding.bottom,
-                    child: FloatingActionButton.small(
-                      heroTag: 'center_user',
-                      backgroundColor: Colors.white,
-                      foregroundColor: AppColors.primary,
-                      onPressed: () => _centerOnUser(beaconState.currentBeacon),
-                      child: const Icon(Icons.my_location),
-                    ),
-                  ),
-
-                  // Navigation info panel
-                  if (navState.isNavigating && navState.currentRoute != null)
-                    Positioned(
-                      left: 0,
-                      right: 0,
-                      bottom: 0,
-                      child: NavigationInfoPanel(
-                        route: navState.currentRoute!,
-                        destination: navState.selectedDestination!,
-                        currentInstructionIndex: navState.currentRouteIndex,
-                        hasArrived: navState.hasArrived,
-                        onCancel: () {
-                          context.read<NavigationCubit>().cancelNavigation();
-                        },
+                      // Floor selector
+                      Positioned(
+                        top: MediaQuery.of(context).padding.top + 90,
+                        left: 16,
+                        child: FloorSelector(
+                          currentFloor: navState.currentFloor,
+                          floors: configState.config?.mapConfig.floors.map((f) => f.floorNumber).toList() ?? const [1],
+                          highlightedFloors: navState.currentRoute?.floorsInRoute,
+                          onFloorSelected: (floor) {
+                            context.read<NavigationCubit>().changeFloor(floor);
+                          },
+                        ),
                       ),
-                    ),
 
-                  // Bottom action buttons (when not navigating)
-                  if (!navState.isNavigating && !navState.hasArrived)
-                    _buildBottomActions(navState, beaconState),
-
-                  // Loading overlay
-                  if (navState.status == NavigationStatus.loading)
-                    Container(
-                      color: Colors.black26,
-                      child: const Center(
-                        child: CircularProgressIndicator(),
+                      // Beacon Status Widget
+                      Positioned(
+                        top: MediaQuery.of(context).padding.top + 90,
+                        right: 16,
+                        child: BeaconStatusWidget(
+                          statusStream: context.read<HybridBeaconDataSource>().beaconStatusStream,
+                          isVisible: _showBeaconStatus,
+                          onToggle: () {
+                            setState(() {
+                              _showBeaconStatus = !_showBeaconStatus;
+                            });
+                          },
+                        ),
                       ),
-                    ),
-                ],
+
+                      // Configuration Button
+                      Positioned(
+                        right: 16,
+                        bottom: (navState.selectedDestination != null ? 270 : 150) +
+                            MediaQuery.of(context).padding.bottom,
+                        child: FloatingActionButton.small(
+                          heroTag: 'config',
+                          backgroundColor: Colors.white,
+                          foregroundColor: Colors.grey[700],
+                          onPressed: () => _openConfiguration(context),
+                          child: const Icon(Icons.settings),
+                        ),
+                      ),
+
+                      // Center on User Button
+                      Positioned(
+                        right: 16,
+                        bottom: (navState.selectedDestination != null ? 220 : 100) +
+                            MediaQuery.of(context).padding.bottom,
+                        child: FloatingActionButton.small(
+                          heroTag: 'center_user',
+                          backgroundColor: Colors.white,
+                          foregroundColor: AppColors.primary,
+                          onPressed: () => _centerOnUser(beaconState.currentBeacon),
+                          child: const Icon(Icons.my_location),
+                        ),
+                      ),
+
+                      // Navigation info panel
+                      if (navState.isNavigating && navState.currentRoute != null)
+                        Positioned(
+                          left: 0,
+                          right: 0,
+                          bottom: 0,
+                          child: NavigationInfoPanel(
+                            route: navState.currentRoute!,
+                            destination: navState.selectedDestination!,
+                            currentInstructionIndex: navState.currentRouteIndex,
+                            hasArrived: navState.hasArrived,
+                            onCancel: () {
+                              context.read<NavigationCubit>().cancelNavigation();
+                            },
+                          ),
+                        ),
+
+                      // Bottom action buttons (when not navigating)
+                      if (!navState.isNavigating && !navState.hasArrived)
+                        _buildBottomActions(navState, beaconState),
+
+                      // Loading overlay
+                      if (navState.status == NavigationStatus.loading)
+                        Container(
+                          color: Colors.black26,
+                          child: const Center(
+                            child: CircularProgressIndicator(),
+                          ),
+                        ),
+                    ],
+                  );
+                },
               );
             },
           );
         },
       ),
     ),
+    ),
     );
   }
 
-  Widget _buildMap(NavigationState navState, BeaconState beaconState) {
-    if (navState.currentFloorMap == null) {
-      return const Center(child: CircularProgressIndicator());
-    }
+  Widget _buildMap(NavigationState navState, BeaconState beaconState, ConfigurationState configState) {
+    final config = configState.config;
+    final mapWidth = config?.mapConfig.width ?? AppConstants.mapWidth;
+    final mapHeight = config?.mapConfig.height ?? AppConstants.mapHeight;
+    
+    // Get current floor configuration
+    final currentFloorConfig = config?.mapConfig.floors.firstWhere(
+      (f) => f.floorNumber == navState.currentFloor,
+      orElse: () => config.mapConfig.floors.first,
+    );
 
     return InteractiveViewer(
       transformationController: _transformationController,
-      minScale: 0.1, // Allow zooming out far
-      maxScale: 5.0, // Allow zooming in close
-      boundaryMargin: const EdgeInsets.all(5000), // Infinite-feeling pan space
-      constrained: false, // Map size is independent of screen size
+      minScale: 0.1,
+      maxScale: 5.0,
+      boundaryMargin: const EdgeInsets.all(5000),
+      constrained: false,
       panEnabled: true,
       scaleEnabled: true,
       child: SizedBox(
-        width: AppConstants.mapWidth,
-        height: AppConstants.mapHeight,
+        width: mapWidth,
+        height: mapHeight,
         child: Stack(
           children: [
-            // Indoor map base
-            CustomPaint(
-              size: const Size(AppConstants.mapWidth, AppConstants.mapHeight),
-              painter: IndoorMapPainter(
-                floorMap: navState.currentFloorMap!,
-                selectedDepartment: navState.selectedDestination,
+            // Floor image (if configured) or default map painter
+            if (currentFloorConfig?.imagePath != null)
+              Image.file(
+                File(currentFloorConfig!.imagePath!),
+                width: mapWidth,
+                height: mapHeight,
+                fit: BoxFit.cover,
+              )
+            else if (navState.currentFloorMap != null)
+              CustomPaint(
+                size: Size(mapWidth, mapHeight),
+                painter: IndoorMapPainter(
+                  floorMap: navState.currentFloorMap!,
+                  selectedDepartment: navState.selectedDestination,
+                ),
+              )
+            else
+              Container(
+                width: mapWidth,
+                height: mapHeight,
+                color: Colors.grey[200],
+                child: const Center(
+                  child: Text('No map configured'),
+                ),
               ),
-            ),
 
-            // Route overlay
+            // Route overlay (navigation path - visible)
             if (navState.currentRoute != null)
               AnimatedBuilder(
                 animation: _routeAnimation,
@@ -308,8 +401,7 @@ class _IndoorMapViewState extends State<IndoorMapView>
                           ? navState.currentRoute!.nodes.last
                           : null;
                   return CustomPaint(
-                    size: const Size(
-                        AppConstants.mapWidth, AppConstants.mapHeight),
+                    size: Size(mapWidth, mapHeight),
                     painter: RoutePainter(
                       route: navState.currentRoute,
                       currentFloor: navState.currentFloor,
@@ -321,23 +413,8 @@ class _IndoorMapViewState extends State<IndoorMapView>
                 },
               ),
 
-            // Beacon markers
-            _buildBeaconMarker(
-              x: 400,
-              y: 460,
-              label: 'A',
-              color: Colors.green,
-              floor: 1,
-              currentFloor: navState.currentFloor,
-            ),
-            _buildBeaconMarker(
-              x: 90,
-              y: 220,
-              label: 'B',
-              color: Colors.orange,
-              floor: 1,
-              currentFloor: navState.currentFloor,
-            ),
+            // Note: Configured nodes, routes, and beacons are hidden
+            // They work in the background for navigation but are not displayed
 
             // User position arrow
             if (beaconState.currentBeacon != null &&

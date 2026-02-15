@@ -255,8 +255,10 @@ class NodeEditorScreen extends StatelessWidget {
         return Icons.stairs;
       case ConnectionType.elevator:
         return Icons.elevator;
-      case ConnectionType.restricted:
-        return Icons.lock;
+      case ConnectionType.emergency:
+        return Icons.emergency;
+      case ConnectionType.staff:
+        return Icons.badge;
       case ConnectionType.normal:
         return Icons.arrow_forward;
     }

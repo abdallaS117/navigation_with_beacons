@@ -21,20 +21,32 @@ class LocalConfigurationStorageService implements ConfigurationStorageService {
     try {
       final prefs = await SharedPreferences.getInstance();
       final jsonString = prefs.getString(_configKey);
-      if (jsonString == null) return null;
+      if (jsonString == null) {
+        print('💾 No saved config found');
+        return null;
+      }
       
       final json = jsonDecode(jsonString) as Map<String, dynamic>;
-      return NavigationConfig.fromJson(json);
+      final config = NavigationConfig.fromJson(json);
+      print('💾 Loaded config with ${config.beacons.length} beacons');
+      print('💾 Beacon IDs loaded: ${config.beacons.map((b) => b.id).toList()}');
+      return config;
     } catch (e) {
+      print('💾 Error loading config: $e');
       return null;
     }
   }
 
   @override
   Future<void> saveConfiguration(NavigationConfig config) async {
+    print('💾 Saving config with ${config.beacons.length} beacons');
+    print('💾 Beacon IDs being saved: ${config.beacons.map((b) => b.id).toList()}');
+    
     final prefs = await SharedPreferences.getInstance();
     final jsonString = jsonEncode(config.toJson());
     await prefs.setString(_configKey, jsonString);
+    
+    print('💾 Config saved to SharedPreferences');
     
     // Also save to config list
     await _addToConfigList(config.id);

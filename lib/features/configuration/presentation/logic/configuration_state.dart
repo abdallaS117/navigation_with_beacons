@@ -19,6 +19,9 @@ class ConfigurationState extends Equatable {
   final String? selectedBeaconId;
   final ConfigurationMode mode;
   final bool isDirty;
+  final List<String> routeNodesInProgress;
+  final String? routeIdBeingEdited;
+  final String? selectedRouteId;
 
   const ConfigurationState({
     this.status = ConfigurationStatus.initial,
@@ -29,6 +32,9 @@ class ConfigurationState extends Equatable {
     this.selectedBeaconId,
     this.mode = ConfigurationMode.view,
     this.isDirty = false,
+    this.routeNodesInProgress = const [],
+    this.routeIdBeingEdited,
+    this.selectedRouteId,
   });
 
   ConfigurationState copyWith({
@@ -40,6 +46,9 @@ class ConfigurationState extends Equatable {
     String? selectedBeaconId,
     ConfigurationMode? mode,
     bool? isDirty,
+    List<String>? routeNodesInProgress,
+    String? routeIdBeingEdited,
+    String? selectedRouteId,
   }) {
     return ConfigurationState(
       status: status ?? this.status,
@@ -50,7 +59,19 @@ class ConfigurationState extends Equatable {
       selectedBeaconId: selectedBeaconId,
       mode: mode ?? this.mode,
       isDirty: isDirty ?? this.isDirty,
+      routeNodesInProgress: routeNodesInProgress ?? this.routeNodesInProgress,
+      routeIdBeingEdited: routeIdBeingEdited,
+      selectedRouteId: selectedRouteId,
     );
+  }
+
+  RouteConfig? get selectedRoute {
+    if (config == null || selectedRouteId == null) return null;
+    try {
+      return config!.routes.firstWhere((r) => r.id == selectedRouteId);
+    } catch (_) {
+      return null;
+    }
   }
 
   List<ConfigurableNode> get nodesForCurrentFloor {
@@ -96,6 +117,9 @@ class ConfigurationState extends Equatable {
         selectedBeaconId,
         mode,
         isDirty,
+        routeNodesInProgress,
+        routeIdBeingEdited,
+        selectedRouteId,
       ];
 }
 
@@ -108,4 +132,5 @@ enum ConfigurationMode {
   placeBeacon,
   addConnection,
   deleteConnection,
+  createRoute,
 }

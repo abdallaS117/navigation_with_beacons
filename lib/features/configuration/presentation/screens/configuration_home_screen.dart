@@ -5,6 +5,7 @@ import '../logic/configuration_state.dart';
 import 'map_editor_screen.dart';
 import 'beacon_management_screen.dart';
 import 'node_editor_screen.dart';
+import 'routes_management_screen.dart';
 
 class ConfigurationHomeScreen extends StatelessWidget {
   const ConfigurationHomeScreen({super.key});
@@ -105,7 +106,7 @@ class ConfigurationHomeScreen extends StatelessWidget {
           subtitle: '${state.config?.routes.length ?? 0} routes defined',
           icon: Icons.route,
           color: Colors.purple,
-          onTap: () => _showComingSoon(context),
+          onTap: () => _navigateTo(context, const RoutesManagementScreen()),
         ),
         const SizedBox(height: 24),
         _buildExportImportSection(context),

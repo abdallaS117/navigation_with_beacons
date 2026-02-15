@@ -37,11 +37,21 @@ class ConfigurationRepository {
     final beacons = List<ConfigurableBeacon>.from(config.beacons);
     final index = beacons.indexWhere((b) => b.id == beacon.id);
     
+    print('📍 upsertBeacon called for beacon ID: ${beacon.id}');
+    print('📍 Current beacons count: ${beacons.length}');
+    print('📍 Existing beacon IDs: ${beacons.map((b) => b.id).toList()}');
+    print('📍 Index found: $index');
+    
     if (index >= 0) {
+      print('📍 Updating existing beacon at index $index');
       beacons[index] = beacon;
     } else {
+      print('📍 Adding new beacon');
       beacons.add(beacon);
     }
+    
+    print('📍 New beacons count: ${beacons.length}');
+    print('📍 New beacon IDs: ${beacons.map((b) => b.id).toList()}');
     
     final updated = config.copyWith(beacons: beacons);
     await saveConfiguration(updated);
