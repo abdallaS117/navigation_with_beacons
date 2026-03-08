@@ -15,6 +15,7 @@ class ConfigurationHomeScreen extends StatelessWidget {
     return BlocBuilder<ConfigurationCubit, ConfigurationState>(
       builder: (context, state) {
         return Scaffold(
+          backgroundColor: Colors.white,
           appBar: AppBar(
             title: const Text('Configuration'),
             actions: [
