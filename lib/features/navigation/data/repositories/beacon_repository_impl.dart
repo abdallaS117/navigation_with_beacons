@@ -2,7 +2,7 @@ import 'dart:async';
 import '../../domain/entities/beacon_node.dart';
 import '../../domain/entities/navigation_route.dart';
 import '../../domain/repositories/beacon_repository.dart';
-import '../../features/configuration/data/repositories/configuration_repository.dart';
+import '../../../configuration/data/repositories/configuration_repository.dart';
 import '../datasources/hybrid_beacon_datasource.dart';
 
 class BeaconRepositoryImpl implements BeaconRepository {

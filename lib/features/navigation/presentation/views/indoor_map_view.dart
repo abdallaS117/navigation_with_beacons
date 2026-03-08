@@ -1,11 +1,11 @@
-import 'dart:io';
 import 'package:flutter/material.dart';
 import 'package:flutter_bloc/flutter_bloc.dart';
 import '../../domain/entities/beacon_node.dart';
-import '../../core/constants/app_colors.dart';
-import '../../core/constants/app_constants.dart';
+import '../../../../core/constants/app_colors.dart';
+import '../../../../core/constants/app_constants.dart';
 import '../../data/datasources/hybrid_beacon_datasource.dart';
-import '../../features/configuration/configuration.dart';
+import '../../../configuration/configuration.dart';
+import '../../../configuration/presentation/widgets/smart_map_image.dart';
 import '../logic/navigation_cubit.dart';
 import '../logic/navigation_state.dart';
 import '../logic/beacon_cubit.dart';
@@ -367,8 +367,8 @@ class _IndoorMapViewState extends State<IndoorMapView>
           children: [
             // Floor image (if configured) or default map painter
             if (currentFloorConfig?.imagePath != null)
-              Image.file(
-                File(currentFloorConfig!.imagePath!),
+              SmartMapImage(
+                imagePath: currentFloorConfig!.imagePath,
                 width: mapWidth,
                 height: mapHeight,
                 fit: BoxFit.cover,

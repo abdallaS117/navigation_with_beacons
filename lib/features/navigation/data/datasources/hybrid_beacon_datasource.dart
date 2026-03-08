@@ -5,9 +5,9 @@ import 'package:flutter_blue_plus/flutter_blue_plus.dart';
 import 'package:permission_handler/permission_handler.dart';
 import '../../domain/entities/beacon_node.dart';
 import '../../domain/entities/navigation_route.dart';
-import '../../features/configuration/data/repositories/configuration_repository.dart';
-import '../../features/configuration/domain/models/configurable_beacon.dart';
-import '../../features/configuration/domain/models/configurable_node.dart';
+import '../../../configuration/data/repositories/configuration_repository.dart';
+import '../../../configuration/domain/models/configurable_beacon.dart';
+import '../../../configuration/domain/models/configurable_node.dart';
 
 // Abstract interface for beacon data sources
 abstract class BeaconDataSource {
@@ -105,39 +105,10 @@ class HybridBeaconDataSource implements BeaconDataSource {
   final Map<String, int> _beaconRssiMap = {};
   final Map<String, DateTime> _beaconLastSeenMap = {};
   
-  // RSSI Kalman filter state for each beacon
-  double? _kalmanARssi;
-  double? _kalmanBRssi;
-  double _kalmanAVariance = 1.0;
-  double _kalmanBVariance = 1.0;
-  static const double _kalmanProcessNoise = 0.003;  // Lower = smoother but slower response
-  static const double _kalmanMeasurementNoise = 4.0;  // Higher = trusts history more
-  
-  // RSSI buffers for outlier detection
-  final List<int> _rssiABuffer = [];
-  final List<int> _rssiBBuffer = [];
-  static const int _rssiBufferSize = 7;  // More samples for better outlier detection
-  
-  // Distance smoothing with median filter (production-ready)
-  final List<double> _distanceABuffer = [];
-  final List<double> _distanceBBuffer = [];
-  static const int _distanceBufferSize = 12;  // More samples = more stable
-  
   // Position smoothing with exponential moving average
   double? _smoothedX;
   double? _smoothedY;
   static const double _positionSmoothingFactor = 0.15;  // 0.1=very smooth, 0.5=responsive
-  
-  // Confidence tracking based on signal quality
-  double _confidenceA = 0.0;
-  double _confidenceB = 0.0;
-  
-  // Hysteresis for anti-flicker (AGGRESSIVE settings)
-  static const double _switchThreshold = 2.5;  // 2.5m minimum difference to switch beacons
-  static const int _confirmationCycles = 6;  // 6 consecutive cycles needed (~2.5 seconds)
-  String? _currentNearestBeacon;  // 'A', 'B', or 'MIDDLE'
-  String? _pendingNearestBeacon;
-  int _pendingConfirmationCount = 0;
 
   Timer? _updateTimer;
   Timer? _fallbackTimer;
@@ -293,33 +264,79 @@ class HybridBeaconDataSource implements BeaconDataSource {
     final now = DateTime.now();
 
     for (final result in results) {
-      final manufacturerData = result.advertisementData.manufacturerData;
+      final serviceData = result.advertisementData.serviceData;
+      final rssi = result.rssi;
       
-      if (manufacturerData.containsKey(0x004C)) {
-        final data = manufacturerData[0x004C]!;
+      String? beaconId;
+      String? beaconType;
+      
+      // Only detect Eddystone beacons (Google service UUID 0xFEAA)
+      // Service data keys are Guid objects, need to check by string representation
+      if (serviceData.isNotEmpty) {
+        List<int>? eddystoneData;
         
-        if (data.length >= 23 && data[0] == 0x02 && data[1] == 0x15) {
-          final uuid = _extractUuid(data.sublist(2, 18));
-          final rssi = result.rssi;
-          final normalizedUuid = uuid.toUpperCase();
-          
-          // Extract major and minor from iBeacon data (bytes 18-19 = major, bytes 20-21 = minor)
-          final major = (data[18] << 8) + data[19];
-          final minor = (data[20] << 8) + data[21];
-          
-          // Build beacon ID with actual major/minor values (matches format from beacon_scanner_dialog)
-          final beaconId = 'beacon_${normalizedUuid.replaceAll('-', '')}_${major}_$minor';
-          debugPrint('🔍 Scanned beacon: UUID=$normalizedUuid, Major=$major, Minor=$minor → beaconId=$beaconId');
-          
-          if (_beaconUuidToNodeId.containsKey(beaconId)) {
-            _beaconRssiMap[beaconId] = rssi;
-            _beaconLastSeenMap[beaconId] = now;
-            final nodeId = _beaconUuidToNodeId[beaconId];
-            debugPrint('✅ MATCH! Beacon $beaconId → Node $nodeId, RSSI: $rssi');
-          } else {
-            debugPrint('❌ NO MATCH for beaconId: $beaconId');
-            debugPrint('   Available mappings: ${_beaconUuidToNodeId.keys.toList()}');
+        // Find Eddystone service data by checking if key contains 'feaa'
+        for (final entry in serviceData.entries) {
+          final keyStr = entry.key.toString().toLowerCase();
+          if (keyStr.contains('feaa')) {
+            eddystoneData = entry.value;
+            debugPrint('🔎 Found Eddystone service with key: $keyStr');
+            break;
           }
+        }
+        
+        if (eddystoneData != null) {
+          final data = eddystoneData;
+        
+          debugPrint('🔎 Eddystone data found! Length: ${data.length}, Data: ${data.map((b) => b.toRadixString(16).padLeft(2, '0')).join(' ')}');
+          
+          if (data.isNotEmpty) {
+            final frameType = data[0];
+            debugPrint('🔎 Eddystone frame type: 0x${frameType.toRadixString(16).padLeft(2, '0')}');
+            
+            // Eddystone-UID frame (0x00)
+            if (frameType == 0x00 && data.length >= 18) {
+              final namespace = data.sublist(2, 12).map((b) => b.toRadixString(16).padLeft(2, '0')).join().toUpperCase();
+              final instance = data.sublist(12, 18).map((b) => b.toRadixString(16).padLeft(2, '0')).join().toUpperCase();
+              
+              // Use format compatible with stored configuration: beacon_NAMESPACE+INSTANCE_0_0
+              beaconId = 'beacon_${namespace}${instance}_0_0';
+              beaconType = 'Eddystone-UID';
+              debugPrint('🔍 Scanned $beaconType: Namespace=$namespace, Instance=$instance → beaconId=$beaconId');
+            }
+            // Eddystone-URL frame (0x10)
+            else if (frameType == 0x10 && data.length >= 4) {
+              final urlScheme = _getEddystoneUrlScheme(data[2]);
+              final urlBytes = data.sublist(3);
+              final url = urlScheme + String.fromCharCodes(urlBytes);
+              final urlHash = url.hashCode.toRadixString(16).padLeft(8, '0');
+              
+              beaconId = 'beacon_eddystone_url_$urlHash';
+              beaconType = 'Eddystone-URL';
+              debugPrint('🔍 Scanned $beaconType: URL=$url → beaconId=$beaconId');
+            }
+            // Eddystone-EID frame (0x30)
+            else if (frameType == 0x30 && data.length >= 10) {
+              final eid = data.sublist(2, 10).map((b) => b.toRadixString(16).padLeft(2, '0')).join();
+              
+              beaconId = 'beacon_eddystone_eid_$eid';
+              beaconType = 'Eddystone-EID';
+              debugPrint('🔍 Scanned $beaconType: EID=$eid → beaconId=$beaconId');
+            }
+          }
+        }
+      }
+      
+      // Process detected Eddystone beacon
+      if (beaconId != null) {
+        if (_beaconUuidToNodeId.containsKey(beaconId)) {
+          _beaconRssiMap[beaconId] = rssi;
+          _beaconLastSeenMap[beaconId] = now;
+          final nodeId = _beaconUuidToNodeId[beaconId];
+          debugPrint('✅ MATCH! Beacon $beaconId ($beaconType) → Node $nodeId, RSSI: $rssi');
+        } else {
+          debugPrint('❌ NO MATCH for beaconId: $beaconId ($beaconType)');
+          debugPrint('   Available mappings: ${_beaconUuidToNodeId.keys.toList()}');
         }
       }
     }
@@ -338,66 +355,21 @@ class HybridBeaconDataSource implements BeaconDataSource {
       debugPrint('🔴 Beacon $beaconId stale, clearing');
     }
   }
+  
+  String _getEddystoneUrlScheme(int schemeByte) {
+    switch (schemeByte) {
+      case 0x00: return 'http://www.';
+      case 0x01: return 'https://www.';
+      case 0x02: return 'http://';
+      case 0x03: return 'https://';
+      default: return '';
+    }
+  }
 
   String _extractUuid(List<int> bytes) {
     final hex = bytes.map((b) => b.toRadixString(16).padLeft(2, '0')).join();
     return '${hex.substring(0, 8)}-${hex.substring(8, 12)}-'
            '${hex.substring(12, 16)}-${hex.substring(16, 20)}-${hex.substring(20)}';
-  }
-
-  /// Kalman filter for RSSI smoothing - reduces noise while tracking real changes
-  double _applyKalmanFilter(int rawRssi, bool isBeaconA) {
-    // Add to buffer for outlier detection
-    final buffer = isBeaconA ? _rssiABuffer : _rssiBBuffer;
-    buffer.add(rawRssi);
-    if (buffer.length > _rssiBufferSize) {
-      buffer.removeAt(0);
-    }
-    
-    // Outlier rejection: if new value is too far from median, reduce its weight
-    double measurementRssi = rawRssi.toDouble();
-    if (buffer.length >= 3) {
-      final sorted = List<int>.from(buffer)..sort();
-      final median = sorted[sorted.length ~/ 2];
-      final diff = (rawRssi - median).abs();
-      if (diff > 10) {
-        // Outlier detected - use median instead
-        measurementRssi = median.toDouble();
-      }
-    }
-    
-    // Kalman filter update
-    if (isBeaconA) {
-      if (_kalmanARssi == null) {
-        // Initialize
-        _kalmanARssi = measurementRssi;
-        _kalmanAVariance = 1.0;
-      } else {
-        // Predict
-        final predictedVariance = _kalmanAVariance + _kalmanProcessNoise;
-        
-        // Update
-        final kalmanGain = predictedVariance / (predictedVariance + _kalmanMeasurementNoise);
-        _kalmanARssi = _kalmanARssi! + kalmanGain * (measurementRssi - _kalmanARssi!);
-        _kalmanAVariance = (1 - kalmanGain) * predictedVariance;
-      }
-      return _kalmanARssi!;
-    } else {
-      if (_kalmanBRssi == null) {
-        // Initialize
-        _kalmanBRssi = measurementRssi;
-        _kalmanBVariance = 1.0;
-      } else {
-        // Predict
-        final predictedVariance = _kalmanBVariance + _kalmanProcessNoise;
-        
-        // Update
-        final kalmanGain = predictedVariance / (predictedVariance + _kalmanMeasurementNoise);
-        _kalmanBRssi = _kalmanBRssi! + kalmanGain * (measurementRssi - _kalmanBRssi!);
-        _kalmanBVariance = (1 - kalmanGain) * predictedVariance;
-      }
-      return _kalmanBRssi!;
-    }
   }
 
   void _startPositionUpdates() {
@@ -605,74 +577,6 @@ class HybridBeaconDataSource implements BeaconDataSource {
       currentLocation: location,
     ));
   }
-
-  /// Median filter for distance smoothing (production-ready)
-  /// Eliminates outliers better than moving average
-  double _medianFilter(List<double> values) {
-    if (values.isEmpty) return 0.0;
-    if (values.length == 1) return values[0];
-    
-    final sorted = List<double>.from(values)..sort();
-    final middle = sorted.length ~/ 2;
-    
-    if (sorted.length.isOdd) {
-      return sorted[middle];
-    } else {
-      return (sorted[middle - 1] + sorted[middle]) / 2.0;
-    }
-  }
-  
-  /// Determine nearest beacon with hysteresis to prevent flickering
-  String? _determineNearestBeaconWithHysteresis(double? distanceA, double? distanceB) {
-    if (distanceA == null && distanceB == null) return null;
-    if (distanceA == null) return 'B';
-    if (distanceB == null) return 'A';
-    
-    final distanceDiff = (distanceA - distanceB).abs();
-    
-    // Determine candidate nearest beacon
-    String candidate;
-    if (distanceDiff < _switchThreshold) {
-      // Too close to call - ambiguous state
-      candidate = 'MIDDLE';
-    } else if (distanceA < distanceB) {
-      candidate = 'A';
-    } else {
-      candidate = 'B';
-    }
-    
-    // Hysteresis logic: require N consecutive confirmations before switching
-    if (candidate == _currentNearestBeacon) {
-      // Same as current - reset pending
-      _pendingNearestBeacon = null;
-      _pendingConfirmationCount = 0;
-      return _currentNearestBeacon;
-    }
-    
-    if (candidate == _pendingNearestBeacon) {
-      // Same as pending - increment counter
-      _pendingConfirmationCount++;
-      debugPrint('🔄 Pending switch to $candidate: $_pendingConfirmationCount/$_confirmationCycles');
-      
-      if (_pendingConfirmationCount >= _confirmationCycles) {
-        // Confirmed! Switch to new beacon
-        debugPrint('✅ CONFIRMED: Switching from $_currentNearestBeacon to $candidate');
-        _currentNearestBeacon = candidate;
-        _pendingNearestBeacon = null;
-        _pendingConfirmationCount = 0;
-        return _currentNearestBeacon;
-      }
-      
-      // Not yet confirmed - keep current
-      return _currentNearestBeacon;
-    } else {
-      // New candidate - start pending
-      _pendingNearestBeacon = candidate;
-      _pendingConfirmationCount = 1;
-      debugPrint('🔄 New pending switch to $candidate: 1/$_confirmationCycles');
-      return _currentNearestBeacon;
-    }
-  }
   
   double _rssiToDistance(int rssi) {
     // Advanced distance calculation using Apple's iBeacon ranging algorithm
@@ -736,13 +640,6 @@ class HybridBeaconDataSource implements BeaconDataSource {
     FlutterBluePlus.stopScan();
     _beaconRssiMap.clear();
     _beaconLastSeenMap.clear();
-    _distanceABuffer.clear();
-    _distanceBBuffer.clear();
-    _rssiABuffer.clear();
-    _rssiBBuffer.clear();
-    _currentNearestBeacon = null;
-    _pendingNearestBeacon = null;
-    _pendingConfirmationCount = 0;
     debugPrint('🛑 Beacon scan stopped');
   }
 

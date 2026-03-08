@@ -20,15 +20,10 @@ class ConfigurationHomeScreen extends StatelessWidget {
             actions: [
               if (state.isDirty)
                 IconButton(
-                  icon: const Icon(Icons.save),
+                  icon: const Icon(Icons.cloud_upload),
                   onPressed: () => context.read<ConfigurationCubit>().saveConfiguration(),
-                  tooltip: 'Save Changes',
+                  tooltip: 'Save to Firebase',
                 ),
-              IconButton(
-                icon: const Icon(Icons.refresh),
-                onPressed: () => context.read<ConfigurationCubit>().loadConfiguration(),
-                tooltip: 'Reload',
-              ),
             ],
           ),
           body: _buildBody(context, state),
@@ -126,13 +121,15 @@ class ConfigurationHomeScreen extends StatelessWidget {
             Row(
               children: [
                 Icon(
-                  state.isDirty ? Icons.edit : Icons.check_circle,
+                  state.isDirty ? Icons.cloud_upload : Icons.cloud_done,
                   color: state.isDirty ? Colors.orange : Colors.green,
                 ),
                 const SizedBox(width: 8),
-                Text(
-                  state.isDirty ? 'Unsaved Changes' : 'Configuration Saved',
-                  style: Theme.of(context).textTheme.titleMedium,
+                Expanded(
+                  child: Text(
+                    state.isDirty ? 'Unsaved Changes - Tap Save to Upload' : 'Synced with Firebase',
+                    style: Theme.of(context).textTheme.titleMedium,
+                  ),
                 ),
               ],
             ),
@@ -141,6 +138,19 @@ class ConfigurationHomeScreen extends StatelessWidget {
               Text('Name: ${config.name}'),
               Text('Last Modified: ${_formatDate(config.lastModified)}'),
               Text('Map: ${config.mapConfig.width.toInt()}x${config.mapConfig.height.toInt()}'),
+              const SizedBox(height: 8),
+              Row(
+                children: [
+                  Icon(Icons.cloud_done, size: 16, color: Colors.grey[600]),
+                  const SizedBox(width: 4),
+                  Expanded(
+                    child: Text(
+                      'Auto-syncs from Firebase on startup • No local storage',
+                      style: TextStyle(fontSize: 12, color: Colors.grey[600]),
+                    ),
+                  ),
+                ],
+              ),
             ],
           ],
         ),

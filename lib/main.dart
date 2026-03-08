@@ -1,19 +1,24 @@
 import 'package:flutter/material.dart';
 import 'package:flutter/services.dart';
 import 'package:flutter_bloc/flutter_bloc.dart';
+import 'package:firebase_core/firebase_core.dart';
 
 import 'core/theme/app_theme.dart';
-import 'data/datasources/hybrid_beacon_datasource.dart';
-import 'data/datasources/map_datasource.dart';
-import 'data/repositories/beacon_repository_impl.dart';
-import 'data/repositories/navigation_repository_impl.dart';
+import 'features/navigation/data/datasources/hybrid_beacon_datasource.dart';
+import 'features/navigation/data/datasources/map_datasource.dart';
+import 'features/navigation/data/repositories/beacon_repository_impl.dart';
+import 'features/navigation/data/repositories/navigation_repository_impl.dart';
 import 'features/configuration/configuration.dart';
-import 'presentation/logic/beacon_cubit.dart';
-import 'presentation/logic/navigation_cubit.dart';
-import 'presentation/views/indoor_map_view.dart';
+import 'features/configuration/data/services/firebase_configuration_service.dart';
+import 'features/navigation/presentation/logic/beacon_cubit.dart';
+import 'features/navigation/presentation/logic/navigation_cubit.dart';
+import 'features/navigation/presentation/views/indoor_map_view.dart';
 
-void main() {
+void main() async {
   WidgetsFlutterBinding.ensureInitialized();
+  
+  // Initialize Firebase
+  await Firebase.initializeApp();
   
   SystemChrome.setPreferredOrientations([
     DeviceOrientation.portraitUp,
@@ -39,7 +44,10 @@ class HospitalNavigationApp extends StatelessWidget {
       providers: [
         // Configuration Repository (must come first)
         RepositoryProvider<ConfigurationRepository>(
-          create: (_) => ConfigurationRepository(LocalConfigurationStorageService()),
+          create: (_) => ConfigurationRepository(
+            LocalConfigurationStorageService(),
+            firebaseService: FirebaseConfigurationService(),
+          ),
         ),
         
         // Data sources

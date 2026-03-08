@@ -1,6 +1,6 @@
 import 'package:flutter/material.dart';
 import '../../domain/entities/department.dart';
-import '../../core/constants/app_colors.dart';
+import '../../../../core/constants/app_colors.dart';
 
 class DestinationSelector extends StatelessWidget {
   final List<Department> departments;

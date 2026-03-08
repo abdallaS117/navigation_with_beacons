@@ -2,7 +2,7 @@ import 'package:flutter/material.dart';
 import '../../domain/entities/department.dart';
 import '../../domain/entities/floor_map.dart';
 import '../../domain/entities/map_element.dart';
-import '../../core/constants/app_colors.dart';
+import '../../../../core/constants/app_colors.dart';
 
 /// Static map provider that uses hardcoded map data.
 class StaticMapProvider {

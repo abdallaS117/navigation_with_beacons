@@ -1,7 +1,7 @@
 import 'package:flutter/material.dart';
 import '../../domain/entities/navigation_route.dart';
 import '../../domain/entities/department.dart';
-import '../../core/constants/app_colors.dart';
+import '../../../../core/constants/app_colors.dart';
 
 class NavigationInfoPanel extends StatefulWidget {
   final NavigationRoute route;

@@ -897,6 +897,7 @@ class MapEditorScreen extends StatelessWidget {
 
   void _setFloorImage(BuildContext context, ConfigurationState state, FloorConfig floor) async {
     try {
+      // Pick image from device
       final result = await FilePicker.platform.pickFiles(
         type: FileType.image,
         allowMultiple: false,
@@ -913,7 +914,7 @@ class MapEditorScreen extends StatelessWidget {
             return FloorConfig(
               floorNumber: f.floorNumber,
               name: f.name,
-              imagePath: imagePath,
+              imagePath: imagePath, // Store local path temporarily
               isActive: f.isActive,
             );
           }

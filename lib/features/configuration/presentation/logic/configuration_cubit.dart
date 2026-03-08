@@ -11,7 +11,8 @@ class ConfigurationCubit extends Cubit<ConfigurationState> {
   Future<void> loadConfiguration() async {
     emit(state.copyWith(status: ConfigurationStatus.loading));
     try {
-      final config = await _repository.getConfiguration();
+      // Auto-sync from Firebase on startup
+      final config = await _repository.syncWithFirebase();
       emit(state.copyWith(
         status: ConfigurationStatus.loaded,
         config: config,
@@ -29,11 +30,22 @@ class ConfigurationCubit extends Cubit<ConfigurationState> {
     
     emit(state.copyWith(status: ConfigurationStatus.saving));
     try {
-      await _repository.saveConfiguration(state.config!);
-      emit(state.copyWith(
-        status: ConfigurationStatus.saved,
-        isDirty: false,
-      ));
+      // Save to Firebase (primary storage)
+      final success = await _repository.uploadToFirebase();
+      
+      if (success) {
+        // Also save locally as backup
+        await _repository.saveConfiguration(state.config!);
+        emit(state.copyWith(
+          status: ConfigurationStatus.saved,
+          isDirty: false,
+        ));
+      } else {
+        emit(state.copyWith(
+          status: ConfigurationStatus.error,
+          errorMessage: 'Failed to save configuration to Firebase',
+        ));
+      }
     } catch (e) {
       emit(state.copyWith(
         status: ConfigurationStatus.error,
@@ -391,5 +403,72 @@ class ConfigurationCubit extends Cubit<ConfigurationState> {
 
   Future<Map<String, dynamic>> exportConfiguration() async {
     return await _repository.exportConfiguration();
+  }
+
+  // Firebase Sync Methods
+  Future<bool> uploadToFirebase() async {
+    emit(state.copyWith(status: ConfigurationStatus.saving));
+    try {
+      final success = await _repository.uploadToFirebase();
+      if (success) {
+        emit(state.copyWith(status: ConfigurationStatus.saved));
+      } else {
+        emit(state.copyWith(
+          status: ConfigurationStatus.error,
+          errorMessage: 'Failed to upload to Firebase',
+        ));
+      }
+      return success;
+    } catch (e) {
+      emit(state.copyWith(
+        status: ConfigurationStatus.error,
+        errorMessage: e.toString(),
+      ));
+      return false;
+    }
+  }
+
+  Future<bool> downloadFromFirebase() async {
+    emit(state.copyWith(status: ConfigurationStatus.loading));
+    try {
+      final success = await _repository.downloadFromFirebase();
+      if (success) {
+        final config = await _repository.getConfiguration();
+        emit(state.copyWith(
+          status: ConfigurationStatus.loaded,
+          config: config,
+          isDirty: false,
+        ));
+      } else {
+        emit(state.copyWith(
+          status: ConfigurationStatus.error,
+          errorMessage: 'Failed to download from Firebase',
+        ));
+      }
+      return success;
+    } catch (e) {
+      emit(state.copyWith(
+        status: ConfigurationStatus.error,
+        errorMessage: e.toString(),
+      ));
+      return false;
+    }
+  }
+
+  Future<void> syncWithFirebase() async {
+    emit(state.copyWith(status: ConfigurationStatus.loading));
+    try {
+      final config = await _repository.syncWithFirebase();
+      emit(state.copyWith(
+        status: ConfigurationStatus.loaded,
+        config: config,
+        isDirty: false,
+      ));
+    } catch (e) {
+      emit(state.copyWith(
+        status: ConfigurationStatus.error,
+        errorMessage: e.toString(),
+      ));
+    }
   }
 }
