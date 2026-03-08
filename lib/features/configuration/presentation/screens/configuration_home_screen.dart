@@ -104,8 +104,8 @@ class ConfigurationHomeScreen extends StatelessWidget {
           color: Colors.purple,
           onTap: () => _navigateTo(context, const RoutesManagementScreen()),
         ),
-        const SizedBox(height: 24),
-        _buildExportImportSection(context),
+        // const SizedBox(height: 24),
+        // _buildExportImportSection(context),
       ],
     );
   }
