@@ -6,8 +6,8 @@ import '../../domain/entities/department.dart';
 import '../../domain/entities/floor_map.dart';
 import '../../domain/entities/navigation_route.dart';
 import '../../domain/repositories/navigation_repository.dart';
-import '../../features/configuration/data/repositories/configuration_repository.dart';
-import '../../features/configuration/domain/models/configurable_node.dart';
+import '../../../configuration/data/repositories/configuration_repository.dart';
+import '../../../configuration/domain/models/configurable_node.dart';
 import '../datasources/hybrid_beacon_datasource.dart';
 import '../datasources/map_datasource.dart';
 

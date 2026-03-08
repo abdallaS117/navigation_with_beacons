@@ -1,12 +1,17 @@
 import '../../domain/models/models.dart';
 import '../services/configuration_storage_service.dart';
+import '../services/firebase_configuration_service.dart';
 
 /// Repository for managing navigation configuration.
 class ConfigurationRepository {
   final ConfigurationStorageService _storageService;
+  final FirebaseConfigurationService? _firebaseService;
   NavigationConfig? _cachedConfig;
 
-  ConfigurationRepository(this._storageService);
+  ConfigurationRepository(
+    this._storageService, {
+    FirebaseConfigurationService? firebaseService,
+  }) : _firebaseService = firebaseService;
 
   /// Gets the current configuration, loading from storage if needed.
   Future<NavigationConfig> getConfiguration() async {
@@ -15,6 +20,11 @@ class ConfigurationRepository {
     _cachedConfig = await _storageService.loadConfiguration();
     _cachedConfig ??= NavigationConfig.empty();
     return _cachedConfig!;
+  }
+
+  /// Updates the cached configuration without saving to storage
+  void updateCachedConfig(NavigationConfig config) {
+    _cachedConfig = config;
   }
 
   /// Saves the configuration to storage.
@@ -235,5 +245,74 @@ class ConfigurationRepository {
   Future<Map<String, dynamic>> exportConfiguration() async {
     final config = await getConfiguration();
     return config.toJson();
+  }
+
+  // ========== Firebase Sync Methods ==========
+
+  /// Upload current configuration to Firebase Firestore
+  Future<bool> uploadToFirebase() async {
+    if (_firebaseService == null) {
+      print('⚠️ Firebase service not configured');
+      return false;
+    }
+
+    final config = await getConfiguration();
+    return await _firebaseService!.uploadConfiguration(config);
+  }
+
+  /// Download configuration from Firebase Firestore
+  /// If successful, saves to local storage and updates cache
+  Future<bool> downloadFromFirebase() async {
+    if (_firebaseService == null) {
+      print('⚠️ Firebase service not configured');
+      return false;
+    }
+
+    final config = await _firebaseService!.downloadConfiguration();
+    if (config == null) {
+      return false;
+    }
+
+    // Save to local storage and update cache
+    await saveConfiguration(config);
+    return true;
+  }
+
+  /// Sync configuration: Download from Firebase if available, otherwise use local
+  Future<NavigationConfig> syncWithFirebase() async {
+    if (_firebaseService == null) {
+      print('⚠️ Firebase service not configured, using local storage');
+      return await getConfiguration();
+    }
+
+    // Try to download from Firebase
+    final firebaseConfig = await _firebaseService!.downloadConfiguration();
+    
+    if (firebaseConfig != null) {
+      // Firebase config exists, use it and save locally
+      await saveConfiguration(firebaseConfig);
+      return firebaseConfig;
+    } else {
+      // No Firebase config, use local
+      print('ℹ️ No Firebase config found, using local configuration');
+      return await getConfiguration();
+    }
+  }
+
+  /// Check if Firebase configuration exists
+  Future<bool> hasFirebaseConfig() async {
+    if (_firebaseService == null) return false;
+    return await _firebaseService!.configurationExists();
+  }
+
+  /// Get last Firebase update time
+  Future<DateTime?> getFirebaseUpdateTime() async {
+    if (_firebaseService == null) return null;
+    return await _firebaseService!.getLastUpdateTime();
+  }
+
+  /// Stream configuration changes from Firebase
+  Stream<NavigationConfig?>? streamFirebaseConfig() {
+    return _firebaseService?.streamConfiguration();
   }
 }

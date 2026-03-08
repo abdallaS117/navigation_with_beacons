@@ -1,6 +1,6 @@
 import 'package:flutter/material.dart';
 import '../../data/datasources/hybrid_beacon_datasource.dart';
-import '../../core/constants/app_colors.dart';
+import '../../../../core/constants/app_colors.dart';
 
 class BeaconStatusWidget extends StatelessWidget {
   final Stream<BeaconStatus> statusStream;

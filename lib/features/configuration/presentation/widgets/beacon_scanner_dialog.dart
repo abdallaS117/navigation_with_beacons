@@ -81,11 +81,7 @@ class _BeaconScannerDialogState extends State<BeaconScannerDialog> {
       await FlutterBluePlus.startScan(
         androidScanMode: AndroidScanMode.lowLatency,
         androidUsesFineLocation: true,
-        timeout: const Duration(seconds: 10),
       );
-
-      await Future.delayed(const Duration(seconds: 10));
-      await _stopScanning();
     } catch (e) {
       setState(() {
         _statusMessage = 'Failed to start scan: $e';
@@ -126,37 +122,61 @@ class _BeaconScannerDialogState extends State<BeaconScannerDialog> {
 
   void _processScanResults(List<ScanResult> results) {
     for (final result in results) {
-      final manufacturerData = result.advertisementData.manufacturerData;
+      final serviceData = result.advertisementData.serviceData;
+      final rssi = result.rssi;
       
-      if (manufacturerData.containsKey(0x004C)) {
-        final data = manufacturerData[0x004C]!;
+      // Only detect Eddystone beacons
+      // Service data keys are Guid objects, need to check by string representation
+      if (serviceData.isNotEmpty) {
+        List<int>? eddystoneData;
         
-        if (data.length >= 23 && data[0] == 0x02 && data[1] == 0x15) {
-          final uuid = _extractUuid(data.sublist(2, 18));
-          final major = (data[18] << 8) | data[19];
-          final minor = (data[20] << 8) | data[21];
-          final txPower = data[22].toSigned(8);
-          final rssi = result.rssi;
-          
-          final key = '$uuid-$major-$minor';
-          
-          setState(() {
-            if (_discoveredBeacons.containsKey(key)) {
-              _discoveredBeacons[key] = _discoveredBeacons[key]!.copyWith(
-                rssi: rssi,
-                lastSeen: DateTime.now(),
-              );
-            } else {
-              _discoveredBeacons[key] = _DiscoveredBeacon(
-                uuid: uuid,
-                major: major,
-                minor: minor,
-                txPower: txPower.toDouble(),
-                rssi: rssi,
-                lastSeen: DateTime.now(),
-              );
+        // Find Eddystone service data by checking if key contains 'feaa'
+        for (final entry in serviceData.entries) {
+          final keyStr = entry.key.toString().toLowerCase();
+          if (keyStr.contains('feaa')) {
+            eddystoneData = entry.value;
+            break;
+          }
+        }
+        
+        if (eddystoneData != null) {
+          final data = eddystoneData;
+        
+          if (data.isNotEmpty) {
+            final frameType = data[0];
+            
+            // Eddystone-UID frame
+            if (frameType == 0x00 && data.length >= 18) {
+              final namespace = data.sublist(2, 12).map((b) => b.toRadixString(16).padLeft(2, '0')).join().toUpperCase();
+              final instance = data.sublist(12, 18).map((b) => b.toRadixString(16).padLeft(2, '0')).join().toUpperCase();
+              final txPower = data[1].toSigned(8);
+              
+              // Create a pseudo-UUID from namespace for compatibility
+              final uuid = '${namespace.substring(0, 8)}-${namespace.substring(8, 12)}-${namespace.substring(12, 16)}-${namespace.substring(16, 20)}-${instance}';
+              final key = 'eddystone-$namespace-$instance';
+              
+              setState(() {
+                if (_discoveredBeacons.containsKey(key)) {
+                  _discoveredBeacons[key] = _discoveredBeacons[key]!.copyWith(
+                    rssi: rssi,
+                    lastSeen: DateTime.now(),
+                    beaconType: 'Eddystone-UID',
+                  );
+                } else {
+                  _discoveredBeacons[key] = _DiscoveredBeacon(
+                    uuid: uuid,
+                    major: 0,
+                    minor: 0,
+                    txPower: txPower.toDouble(),
+                    rssi: rssi,
+                    lastSeen: DateTime.now(),
+                    beaconType: 'Eddystone-UID',
+                  );
+                }
+              });
+              continue;
             }
-          });
+          }
         }
       }
     }
@@ -229,15 +249,21 @@ class _BeaconScannerDialogState extends State<BeaconScannerDialog> {
         ),
       ),
       actions: [
-        if (!_isScanning)
+        if (_isScanning)
+          TextButton.icon(
+            icon: const Icon(Icons.stop),
+            label: const Text('Stop Scanning'),
+            onPressed: _stopScanning,
+          )
+        else
           TextButton(
             onPressed: () => Navigator.pop(context),
-            child: const Text('Cancel'),
+            child: const Text('Close'),
           ),
-        if (!_isScanning && _discoveredBeacons.isNotEmpty)
+        if (_discoveredBeacons.isNotEmpty)
           ElevatedButton.icon(
             icon: const Icon(Icons.add),
-            label: const Text('Add All New'),
+            label: Text(_isScanning ? 'Add All & Continue' : 'Add All New'),
             onPressed: () {
               final newBeacons = _discoveredBeacons.values
                   .where((b) => !_existingBeaconKeys.contains('${b.uuid}-${b.major}-${b.minor}'))
@@ -252,7 +278,15 @@ class _BeaconScannerDialogState extends State<BeaconScannerDialog> {
                 );
                 return;
               }
-              Navigator.pop(context, newBeacons);
+              
+              if (_isScanning) {
+                _existingBeaconKeys.addAll(
+                  newBeacons.map((b) => '${b.uuid}-${b.major}-${b.minor}')
+                );
+                Navigator.pop(context, newBeacons);
+              } else {
+                Navigator.pop(context, newBeacons);
+              }
             },
           ),
       ],
@@ -280,7 +314,7 @@ class _BeaconScannerDialogState extends State<BeaconScannerDialog> {
           children: [
             Expanded(
               child: Text(
-                'Beacon ${beacon.major}-${beacon.minor}',
+                '${beacon.beaconType} ${beacon.major}-${beacon.minor}',
                 style: TextStyle(
                   fontWeight: FontWeight.bold,
                   color: isAlreadyAdded ? Colors.grey[600] : null,
@@ -329,7 +363,14 @@ class _BeaconScannerDialogState extends State<BeaconScannerDialog> {
             : IconButton(
                 icon: const Icon(Icons.add_circle, color: Colors.green),
                 onPressed: () {
-                  Navigator.pop(context, [beacon.toConfigurableBeacon()]);
+                  final beaconToAdd = beacon.toConfigurableBeacon();
+                  final beaconKey = '${beacon.uuid}-${beacon.major}-${beacon.minor}';
+                  
+                  setState(() {
+                    _existingBeaconKeys.add(beaconKey);
+                  });
+                  
+                  Navigator.pop(context, [beaconToAdd]);
                 },
                 tooltip: 'Add this beacon',
               ),
@@ -356,6 +397,7 @@ class _DiscoveredBeacon {
   final double txPower;
   final int rssi;
   final DateTime lastSeen;
+  final String beaconType;
 
   _DiscoveredBeacon({
     required this.uuid,
@@ -364,6 +406,7 @@ class _DiscoveredBeacon {
     required this.txPower,
     required this.rssi,
     required this.lastSeen,
+    this.beaconType = 'iBeacon',
   });
 
   _DiscoveredBeacon copyWith({
@@ -373,6 +416,7 @@ class _DiscoveredBeacon {
     double? txPower,
     int? rssi,
     DateTime? lastSeen,
+    String? beaconType,
   }) {
     return _DiscoveredBeacon(
       uuid: uuid ?? this.uuid,
@@ -381,6 +425,7 @@ class _DiscoveredBeacon {
       txPower: txPower ?? this.txPower,
       rssi: rssi ?? this.rssi,
       lastSeen: lastSeen ?? this.lastSeen,
+      beaconType: beaconType ?? this.beaconType,
     );
   }
 

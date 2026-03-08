@@ -1,7 +1,7 @@
 import 'package:flutter/material.dart';
 import '../../domain/entities/floor_map.dart';
 import '../../domain/entities/department.dart';
-import '../../core/constants/app_colors.dart';
+import '../../../../core/constants/app_colors.dart';
 
 /// AutoCAD-style architectural floor plan painter
 class IndoorMapPainter extends CustomPainter {

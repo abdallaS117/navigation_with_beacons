@@ -2,8 +2,8 @@ import 'dart:math';
 import 'package:flutter/material.dart';
 import '../../domain/entities/beacon_node.dart';
 import '../../domain/entities/navigation_route.dart';
-import '../../core/constants/app_colors.dart';
-import '../../core/constants/app_constants.dart';
+import '../../../../core/constants/app_colors.dart';
+import '../../../../core/constants/app_constants.dart';
 
 /// AutoCAD-style route painter - thin lines, smooth paths
 class RoutePainter extends CustomPainter {
