@@ -120,19 +120,9 @@ class _IndoorMapViewState extends State<IndoorMapView>
     await Navigator.push(
       context,
       MaterialPageRoute(
-        builder: (_) => Theme(
-          data: ThemeData.light().copyWith(
-            scaffoldBackgroundColor: Colors.grey[100],
-            appBarTheme: AppBarTheme(
-              backgroundColor: Colors.blue,
-              foregroundColor: Colors.white,
-              elevation: 2,
-            ),
-          ),
-          child: BlocProvider.value(
-            value: context.read<ConfigurationCubit>(),
-            child: const ConfigurationHomeScreen(),
-          ),
+        builder: (_) => BlocProvider.value(
+          value: context.read<ConfigurationCubit>(),
+          child: const ConfigurationHomeScreen(),
         ),
       ),
     );
