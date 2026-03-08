@@ -1,0 +1,29 @@
+{
+  "project_info": {
+    "project_number": "178371048054",
+    "project_id": "beacons-app-fe70a",
+    "storage_bucket": "beacons-app-fe70a.firebasestorage.app"
+  },
+  "client": [
+    {
+      "client_info": {
+        "mobilesdk_app_id": "1:178371048054:android:3a22f7bd81582be985a557",
+        "android_client_info": {
+          "package_name": "com.example.navigation_with_becons"
+        }
+      },
+      "oauth_client": [],
+      "api_key": [
+        {
+          "current_key": "AIzaSyAydLYjfRwbaGEOVKAyLe1XhMQGPqpXsE4"
+        }
+      ],
+      "services": {
+        "appinvite_service": {
+          "other_platform_oauth_client": []
+        }
+      }
+    }
+  ],
+  "configuration_version": "1"
+}
