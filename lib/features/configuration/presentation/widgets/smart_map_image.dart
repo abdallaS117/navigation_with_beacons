@@ -22,8 +22,31 @@ class SmartMapImage extends StatelessWidget {
       return _buildPlaceholder('No map image set', 'Pick an image to get started');
     }
 
+    // Check if it's an asset path
+    if (imagePath!.startsWith('assets/')) {
+      return _buildAssetImage(imagePath!);
+    }
+
     // Display local file
     return _buildFileImage(imagePath!);
+  }
+
+  Widget _buildAssetImage(String path) {
+    try {
+      return Image.asset(
+        path,
+        width: width,
+        height: height,
+        fit: fit,
+        errorBuilder: (context, error, stackTrace) {
+          print('❌ Error loading asset image: $error');
+          return _buildPlaceholder('Failed to load asset image', 'Asset may not be registered in pubspec.yaml');
+        },
+      );
+    } catch (e) {
+      print('❌ Error creating asset image: $e');
+      return _buildPlaceholder('Invalid asset path', 'Please check the asset path');
+    }
   }
 
   Widget _buildFileImage(String path) {

@@ -21,6 +21,11 @@ class RoutesManagementScreen extends StatelessWidget {
             title: const Text('Routes & Paths'),
             actions: [
               IconButton(
+                icon: const Icon(Icons.delete_sweep, color: Colors.red),
+                onPressed: () => _showClearAllDialog(context, state),
+                tooltip: 'Clear All',
+              ),
+              IconButton(
                 icon: const Icon(Icons.add),
                 onPressed: () => _showCreateRouteInfo(context),
                 tooltip: 'Create Route',
@@ -248,6 +253,80 @@ class RoutesManagementScreen extends StatelessWidget {
               );
             },
             child: const Text('Delete'),
+          ),
+        ],
+      ),
+    );
+  }
+
+  void _showClearAllDialog(BuildContext context, ConfigurationState state) {
+    final hasRoutes = (state.config?.routes ?? []).isNotEmpty;
+    final hasConnections = (state.config?.nodes ?? []).any((n) => n.connections.isNotEmpty);
+    
+    if (!hasRoutes && !hasConnections) {
+      ScaffoldMessenger.of(context).showSnackBar(
+        const SnackBar(content: Text('Nothing to clear - no routes or connections exist')),
+      );
+      return;
+    }
+    
+    showDialog(
+      context: context,
+      builder: (_) => AlertDialog(
+        title: const Row(
+          children: [
+            Icon(Icons.warning, color: Colors.red),
+            SizedBox(width: 8),
+            Text('Clear All'),
+          ],
+        ),
+        content: Column(
+          mainAxisSize: MainAxisSize.min,
+          crossAxisAlignment: CrossAxisAlignment.start,
+          children: [
+            const Text(
+              'What would you like to clear?',
+              style: TextStyle(fontWeight: FontWeight.bold),
+            ),
+            const SizedBox(height: 16),
+            if (hasRoutes)
+              Text('• Routes: ${state.config?.routes.length ?? 0} routes'),
+            if (hasConnections)
+              Text('• Connections: Lines between nodes on the map'),
+            const SizedBox(height: 16),
+            const Text(
+              'Choose an option below:',
+              style: TextStyle(color: Colors.grey),
+            ),
+          ],
+        ),
+        actions: [
+          TextButton(
+            onPressed: () => Navigator.pop(context),
+            child: const Text('Cancel'),
+          ),
+          if (hasRoutes)
+            OutlinedButton(
+              style: OutlinedButton.styleFrom(foregroundColor: Colors.orange),
+              onPressed: () {
+                context.read<ConfigurationCubit>().clearAllRoutes();
+                Navigator.pop(context);
+                ScaffoldMessenger.of(context).showSnackBar(
+                  const SnackBar(content: Text('All routes cleared')),
+                );
+              },
+              child: const Text('Clear Routes Only'),
+            ),
+          ElevatedButton(
+            style: ElevatedButton.styleFrom(backgroundColor: Colors.red),
+            onPressed: () {
+              context.read<ConfigurationCubit>().clearAllRoutesAndConnections();
+              Navigator.pop(context);
+              ScaffoldMessenger.of(context).showSnackBar(
+                const SnackBar(content: Text('All routes and connections cleared')),
+              );
+            },
+            child: const Text('Clear All'),
           ),
         ],
       ),

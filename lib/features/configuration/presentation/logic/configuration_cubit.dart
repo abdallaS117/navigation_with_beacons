@@ -383,6 +383,32 @@ class ConfigurationCubit extends Cubit<ConfigurationState> {
     }
   }
 
+  /// Clears all routes only (keeps node connections).
+  Future<void> clearAllRoutes() async {
+    try {
+      final updated = await _repository.clearAllRoutes();
+      emit(state.copyWith(config: updated, isDirty: true));
+    } catch (e) {
+      emit(state.copyWith(
+        status: ConfigurationStatus.error,
+        errorMessage: e.toString(),
+      ));
+    }
+  }
+
+  /// Clears all routes AND all node connections.
+  Future<void> clearAllRoutesAndConnections() async {
+    try {
+      final updated = await _repository.clearAllRoutesAndConnections();
+      emit(state.copyWith(config: updated, isDirty: true));
+    } catch (e) {
+      emit(state.copyWith(
+        status: ConfigurationStatus.error,
+        errorMessage: e.toString(),
+      ));
+    }
+  }
+
   // Import/Export
   Future<void> importConfiguration(Map<String, dynamic> json) async {
     emit(state.copyWith(status: ConfigurationStatus.loading));
@@ -462,6 +488,30 @@ class ConfigurationCubit extends Cubit<ConfigurationState> {
       emit(state.copyWith(
         status: ConfigurationStatus.loaded,
         config: config,
+        isDirty: false,
+      ));
+    } catch (e) {
+      emit(state.copyWith(
+        status: ConfigurationStatus.error,
+        errorMessage: e.toString(),
+      ));
+    }
+  }
+
+  /// Reset configuration to default (clears saved data)
+  Future<void> resetToDefault() async {
+    emit(state.copyWith(status: ConfigurationStatus.loading));
+    try {
+      // Clear saved configuration
+      _repository.clearCache();
+      
+      // Load default configuration
+      final defaultConfig = NavigationConfig.empty();
+      await _repository.saveConfiguration(defaultConfig);
+      
+      emit(state.copyWith(
+        status: ConfigurationStatus.loaded,
+        config: defaultConfig,
         isDirty: false,
       ));
     } catch (e) {

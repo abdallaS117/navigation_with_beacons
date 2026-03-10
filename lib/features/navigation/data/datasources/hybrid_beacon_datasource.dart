@@ -432,6 +432,12 @@ class HybridBeaconDataSource implements BeaconDataSource {
       return;
     }
     
+    // Check if navigation nodes list is empty
+    if (_navigationNodes.isEmpty) {
+      _emitStatus(null, null, 'No navigation nodes configured');
+      return;
+    }
+    
     // Find the node in navigation nodes
     final node = _navigationNodes.firstWhere(
       (n) => n.uid == nearestNodeId,

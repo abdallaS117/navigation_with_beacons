@@ -1,5 +1,6 @@
 import 'dart:async';
 import 'dart:math';
+import 'package:flutter/foundation.dart';
 import 'package:flutter_bloc/flutter_bloc.dart';
 import '../../domain/entities/beacon_node.dart';
 import '../../domain/entities/department.dart';
@@ -137,7 +138,12 @@ class NavigationCubit extends Cubit<NavigationState> {
   }
 
   Future<void> startNavigation() async {
+    debugPrint('🚀 startNavigation called');
+    debugPrint('   selectedDestination: ${state.selectedDestination?.name}');
+    debugPrint('   currentPosition: ${state.currentPosition?.name} (${state.currentPosition?.uid})');
+    
     if (state.selectedDestination == null || state.currentPosition == null) {
+      debugPrint('❌ Missing destination or position');
       emit(state.copyWith(
         errorMessage: 'Please select a destination and wait for position',
       ));
@@ -148,27 +154,38 @@ class NavigationCubit extends Cubit<NavigationState> {
 
     try {
       // Get beacon for destination department
+      debugPrint('🔍 Getting beacon for department: ${state.selectedDestination!.id}');
       final destinationBeacon = await _navigationRepository.getBeaconForDepartment(
         state.selectedDestination!.id,
       );
 
       if (destinationBeacon == null) {
+        debugPrint('❌ No beacon found for destination');
         emit(state.copyWith(
           status: NavigationStatus.mapLoaded,
           errorMessage: 'No beacon found for destination',
         ));
         return;
       }
+      
+      debugPrint('✅ Destination beacon: ${destinationBeacon.name} (${destinationBeacon.uid})');
+      debugPrint('🧭 Calculating route from ${state.currentPosition!.name} to ${destinationBeacon.name}');
 
       final route = await _navigationRepository.calculateRoute(
         state.currentPosition!,
         destinationBeacon,
       );
+      
+      debugPrint('📍 Route result: ${route.nodes.length} nodes, isEmpty: ${route.isEmpty}');
 
       if (route.isEmpty) {
+        // Check if there's a specific error message (e.g., one-way restriction)
+        final errorMsg = route.instructions.isNotEmpty 
+            ? route.instructions.first 
+            : 'No route found to destination';
         emit(state.copyWith(
           status: NavigationStatus.mapLoaded,
-          errorMessage: 'No route found to destination',
+          errorMessage: errorMsg,
         ));
         return;
       }

@@ -19,6 +19,11 @@ class ConfigurationHomeScreen extends StatelessWidget {
           appBar: AppBar(
             title: const Text('Configuration'),
             actions: [
+              IconButton(
+                icon: const Icon(Icons.refresh),
+                onPressed: () => _showResetDialog(context),
+                tooltip: 'Reset to Default',
+              ),
               if (state.isDirty)
                 IconButton(
                   icon: const Icon(Icons.cloud_upload),
@@ -265,5 +270,39 @@ class ConfigurationHomeScreen extends StatelessWidget {
 
   String _formatDate(DateTime date) {
     return '${date.day}/${date.month}/${date.year} ${date.hour}:${date.minute.toString().padLeft(2, '0')}';
+  }
+
+  void _showResetDialog(BuildContext context) {
+    showDialog(
+      context: context,
+      builder: (_) => AlertDialog(
+        title: const Text('Reset to Default?'),
+        content: const Text(
+          'This will clear all your current configuration (beacons, nodes, routes) and load the default configuration with the floor plan asset.\n\nThis action cannot be undone.',
+        ),
+        actions: [
+          TextButton(
+            onPressed: () => Navigator.pop(context),
+            child: const Text('Cancel'),
+          ),
+          ElevatedButton(
+            style: ElevatedButton.styleFrom(backgroundColor: Colors.red),
+            onPressed: () async {
+              Navigator.pop(context);
+              await context.read<ConfigurationCubit>().resetToDefault();
+              if (context.mounted) {
+                ScaffoldMessenger.of(context).showSnackBar(
+                  const SnackBar(
+                    content: Text('Configuration reset to default'),
+                    backgroundColor: Colors.green,
+                  ),
+                );
+              }
+            },
+            child: const Text('Reset'),
+          ),
+        ],
+      ),
+    );
   }
 }

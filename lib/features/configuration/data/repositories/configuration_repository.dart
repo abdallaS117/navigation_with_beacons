@@ -229,6 +229,34 @@ class ConfigurationRepository {
     return updated;
   }
 
+  /// Clears all routes and their associated connections.
+  Future<NavigationConfig> clearAllRoutes() async {
+    final config = await getConfiguration();
+    
+    // Clear all routes
+    final updated = config.copyWith(routes: []);
+    await saveConfiguration(updated);
+    return updated;
+  }
+
+  /// Clears all routes AND all node connections.
+  Future<NavigationConfig> clearAllRoutesAndConnections() async {
+    final config = await getConfiguration();
+    
+    // Clear connections from all nodes
+    final nodesWithoutConnections = config.nodes.map((node) {
+      return node.copyWith(connections: []);
+    }).toList();
+    
+    // Clear all routes and update nodes
+    final updated = config.copyWith(
+      routes: [],
+      nodes: nodesWithoutConnections,
+    );
+    await saveConfiguration(updated);
+    return updated;
+  }
+
   /// Clears the cached configuration.
   void clearCache() {
     _cachedConfig = null;

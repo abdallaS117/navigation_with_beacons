@@ -98,6 +98,7 @@ class NavigationConfig extends Equatable {
           FloorConfig(
             floorNumber: 1,
             name: 'Floor 1',
+            imagePath: 'assets/images/default_floor_plan.png',
           ),
         ],
       ),

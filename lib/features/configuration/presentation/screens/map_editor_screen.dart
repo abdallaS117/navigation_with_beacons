@@ -438,9 +438,14 @@ class MapEditorScreen extends StatelessWidget {
   }
 
   void _updateConnection(BuildContext context, String fromNodeId, String toNodeId, String direction, ConnectionType type) async {
+    // Remove existing connections in BOTH directions first to ensure clean state
+    // This is important because we might be changing from two-way to one-way or vice versa
     await context.read<ConfigurationCubit>().removeConnection(fromNodeId, toNodeId);
+    // Also remove the reverse connection explicitly (in case it exists separately)
+    await context.read<ConfigurationCubit>().removeConnection(toNodeId, fromNodeId);
     
     if (direction == 'two-way') {
+      // Bidirectional: creates connections on BOTH nodes
       await context.read<ConfigurationCubit>().addConnection(
         fromNodeId,
         toNodeId,
@@ -448,6 +453,7 @@ class MapEditorScreen extends StatelessWidget {
         type: type,
       );
     } else if (direction == 'one-way-forward') {
+      // One-way from fromNode to toNode only
       await context.read<ConfigurationCubit>().addConnection(
         fromNodeId,
         toNodeId,
@@ -455,6 +461,7 @@ class MapEditorScreen extends StatelessWidget {
         type: type,
       );
     } else if (direction == 'one-way-reverse') {
+      // One-way from toNode to fromNode only
       await context.read<ConfigurationCubit>().addConnection(
         toNodeId,
         fromNodeId,
@@ -861,6 +868,7 @@ class MapEditorScreen extends StatelessWidget {
       floors.add(FloorConfig(
         floorNumber: nextFloorNumber,
         name: floorName,
+        imagePath: 'assets/images/default_floor_plan.png',
       ));
       
       final updatedMapConfig = mapConfig.copyWith(floors: floors);
