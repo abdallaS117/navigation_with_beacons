@@ -1,6 +1,7 @@
 import 'package:flutter/material.dart';
 import 'package:flutter_bloc/flutter_bloc.dart';
 import 'package:file_picker/file_picker.dart';
+import '../../../../core/constants/app_constants.dart';
 import '../../domain/models/models.dart';
 import '../logic/configuration_cubit.dart';
 import '../logic/configuration_state.dart';
@@ -868,7 +869,7 @@ class MapEditorScreen extends StatelessWidget {
       floors.add(FloorConfig(
         floorNumber: nextFloorNumber,
         name: floorName,
-        imagePath: 'assets/images/default_floor_plan.png',
+        imagePath: AppConstants.defaultFloorImage,
       ));
       
       final updatedMapConfig = mapConfig.copyWith(floors: floors);

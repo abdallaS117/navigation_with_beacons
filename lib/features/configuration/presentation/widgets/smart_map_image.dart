@@ -22,8 +22,8 @@ class SmartMapImage extends StatelessWidget {
       return _buildPlaceholder('No map image set', 'Pick an image to get started');
     }
 
-    // Check if it's an asset path
-    if (imagePath!.startsWith('assets/')) {
+    // Check if it's an asset path (either assets/ or packages/ prefix)
+    if (imagePath!.startsWith('assets/') || imagePath!.startsWith('packages/')) {
       return _buildAssetImage(imagePath!);
     }
 
