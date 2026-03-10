@@ -19,7 +19,44 @@ class ConfigurationRepository {
     
     _cachedConfig = await _storageService.loadConfiguration();
     _cachedConfig ??= NavigationConfig.empty();
+    
+    // Migrate old asset paths to package-prefixed paths
+    _cachedConfig = _migrateAssetPaths(_cachedConfig!);
+    
     return _cachedConfig!;
+  }
+  
+  /// Migrates old asset paths (assets/) to package-prefixed paths (packages/beacon_navigation/assets/)
+  NavigationConfig _migrateAssetPaths(NavigationConfig config) {
+    bool needsMigration = false;
+    
+    final migratedFloors = config.mapConfig.floors.map((floor) {
+      if (floor.imagePath != null && 
+          floor.imagePath!.startsWith('assets/') && 
+          !floor.imagePath!.startsWith('packages/')) {
+        needsMigration = true;
+        return FloorConfig(
+          floorNumber: floor.floorNumber,
+          name: floor.name,
+          imagePath: 'packages/beacon_navigation/${floor.imagePath}',
+          isActive: floor.isActive,
+        );
+      }
+      return floor;
+    }).toList();
+    
+    if (needsMigration) {
+      print('🔄 Migrating asset paths to package-prefixed format');
+      final updatedMapConfig = config.mapConfig.copyWith(floors: migratedFloors);
+      final migratedConfig = config.copyWith(mapConfig: updatedMapConfig);
+      
+      // Save the migrated configuration
+      saveConfiguration(migratedConfig);
+      
+      return migratedConfig;
+    }
+    
+    return config;
   }
 
   /// Updates the cached configuration without saving to storage
