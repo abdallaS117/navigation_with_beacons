@@ -18,6 +18,7 @@ class NodeEditorScreen extends StatelessWidget {
         return DefaultTabController(
           length: 4,
           child: Scaffold(
+            backgroundColor: Colors.white,
             appBar: AppBar(
               title: const Text('Navigation Nodes'),
               bottom: const TabBar(

@@ -18,6 +18,7 @@ class BeaconManagementScreen extends StatelessWidget {
         final unplacedBeacons = beacons.where((b) => !b.isPlaced).toList();
 
         return Scaffold(
+          backgroundColor: Colors.white,
           appBar: AppBar(
             title: const Text('Beacon Management'),
             actions: [

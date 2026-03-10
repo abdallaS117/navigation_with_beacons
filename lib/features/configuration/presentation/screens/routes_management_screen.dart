@@ -16,6 +16,7 @@ class RoutesManagementScreen extends StatelessWidget {
         final beacons = state.config?.beacons ?? [];
 
         return Scaffold(
+          backgroundColor: Colors.white,
           appBar: AppBar(
             title: const Text('Routes & Paths'),
             actions: [

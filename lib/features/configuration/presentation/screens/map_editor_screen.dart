@@ -21,6 +21,7 @@ class MapEditorScreen extends StatelessWidget {
         return SafeArea(
           bottom: true,
           child: Scaffold(
+            backgroundColor: Colors.white,
             appBar: AppBar(
               title: const Text('Map Editor'),
               actions: [
