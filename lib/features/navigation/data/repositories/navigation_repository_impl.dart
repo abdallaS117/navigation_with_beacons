@@ -83,9 +83,41 @@ class NavigationRepositoryImpl implements NavigationRepository {
       
       if (startIndex != -1 && endIndex != -1) {
         // Both nodes are in this route - extract the path between them
-        final pathNodeIds = startIndex < endIndex
-            ? nodeIds.sublist(startIndex, endIndex + 1)
-            : nodeIds.sublist(endIndex, startIndex + 1).reversed.toList();
+        // IMPORTANT: Only use forward direction (startIndex < endIndex)
+        // Reverse direction requires checking if all connections are bidirectional
+        List<String> pathNodeIds;
+        bool isValidPath = true;
+        
+        if (startIndex < endIndex) {
+          // Forward direction - always valid for routes
+          pathNodeIds = nodeIds.sublist(startIndex, endIndex + 1);
+        } else {
+          // Reverse direction - need to check if all connections allow reverse traversal
+          pathNodeIds = nodeIds.sublist(endIndex, startIndex + 1).reversed.toList();
+          
+          // Validate that we can traverse in reverse (all connections must be bidirectional)
+          for (int i = 0; i < pathNodeIds.length - 1; i++) {
+            final fromId = pathNodeIds[i];
+            final toId = pathNodeIds[i + 1];
+            final fromNode = configurableNodeMap[fromId];
+            
+            // Check if there's a valid connection from fromId to toId
+            final hasDirectConnection = fromNode?.connections.any((c) => c.targetNodeId == toId) ?? false;
+            final hasIncomingBidirectional = configurableNodeMap[toId]?.connections
+                .any((c) => c.targetNodeId == fromId && c.isBidirectional) ?? false;
+            
+            if (!hasDirectConnection && !hasIncomingBidirectional) {
+              debugPrint('   ❌ Cannot traverse reverse: $fromId → $toId (one-way in opposite direction)');
+              isValidPath = false;
+              break;
+            }
+          }
+        }
+        
+        if (!isValidPath) {
+          debugPrint('   ⚠️ Route "${route.name}" cannot be used in reverse direction');
+          continue; // Try next route
+        }
         
         final path = pathNodeIds
             .map((id) => nodeMap[id])
@@ -275,24 +307,68 @@ class NavigationRepositoryImpl implements NavigationRepository {
         nodes: [],
         totalDistance: 0,
         estimatedTimeSeconds: 0,
-        instructions: ['No route found - cannot reach destination through available stairs/elevators'],
+        instructions: ['No route allowed for this destination. Cannot reach through available stairs/elevators.'],
       );
     }
     
     // SAME FLOOR NAVIGATION - Use Dijkstra algorithm
     debugPrint('⚠️ Same floor navigation, using Dijkstra algorithm');
     
+    // Find the actual start and end nodes in the configuration
+    // The start/end BeaconNodes might have UIDs that don't match configurableNodeMap keys
+    BeaconNode actualStart = start;
+    BeaconNode actualEnd = end;
+    
+    // Try to find matching nodes by position or name if UID doesn't match
+    if (!configurableNodeMap.containsKey(start.uid)) {
+      debugPrint('⚠️ Start node ${start.uid} not in configurableNodeMap, searching by name/position...');
+      for (final entry in configurableNodeMap.entries) {
+        if (entry.value.name == start.name || 
+            (entry.value.x == start.x && entry.value.y == start.y && entry.value.floor == start.floor)) {
+          actualStart = nodeMap[entry.key] ?? start;
+          debugPrint('   Found matching start node: ${entry.key}');
+          break;
+        }
+      }
+    }
+    
+    if (!configurableNodeMap.containsKey(end.uid)) {
+      debugPrint('⚠️ End node ${end.uid} not in configurableNodeMap, searching by name/position...');
+      for (final entry in configurableNodeMap.entries) {
+        if (entry.value.name == end.name || 
+            (entry.value.x == end.x && entry.value.y == end.y && entry.value.floor == end.floor)) {
+          actualEnd = nodeMap[entry.key] ?? end;
+          debugPrint('   Found matching end node: ${entry.key}');
+          break;
+        }
+      }
+    }
+    
+    // FIRST: Check if this is a direct one-way restriction BEFORE running Dijkstra
+    // This catches cases where the user is trying to go against a one-way connection
+    final oneWayBlockReason = _checkOneWayRestriction(actualStart, actualEnd, configurableNodeMap);
+    if (oneWayBlockReason != null) {
+      debugPrint('🚫 One-way restriction detected BEFORE pathfinding: $oneWayBlockReason');
+      return NavigationRoute(
+        nodes: const [],
+        totalDistance: 0,
+        estimatedTimeSeconds: 0,
+        instructions: [oneWayBlockReason],
+      );
+    }
+    
     // Use Dijkstra algorithm with node connections
     final allBeacons = nodeMap.values.toList();
-    final path = _dijkstraWithConfig(start, end, allBeacons, configurableNodeMap);
+    final path = _dijkstraWithConfig(actualStart, actualEnd, allBeacons, configurableNodeMap);
     
     if (path.isEmpty) {
-      debugPrint('❌ No route found from ${start.name} to ${end.name}');
+      debugPrint('❌ No route found from ${actualStart.name} to ${actualEnd.name}');
+      
       return const NavigationRoute(
         nodes: [],
         totalDistance: 0,
         estimatedTimeSeconds: 0,
-        instructions: ['No route found'],
+        instructions: ['No route allowed for this destination. Please configure a route first.'],
       );
     }
     
@@ -440,6 +516,18 @@ class NavigationRepositoryImpl implements NavigationRepository {
     List<BeaconNode> allBeacons,
     Map<String, ConfigurableNode> configurableNodeMap,
   ) {
+    // Debug: Log all connections in the configuration
+    debugPrint('🔗 === CONNECTION MAP ===');
+    for (final node in configurableNodeMap.values) {
+      if (node.connections.isNotEmpty) {
+        for (final conn in node.connections) {
+          final direction = conn.isBidirectional ? '↔' : '→';
+          debugPrint('   ${node.name} (${node.id}) $direction ${conn.targetNodeId} [${conn.type.name}]');
+        }
+      }
+    }
+    debugPrint('🔗 === END CONNECTION MAP ===');
+    
     final Map<String, double> distances = {};
     final Map<String, String?> previous = {};
     final Set<String> visited = {};
@@ -466,28 +554,31 @@ class NavigationRepositoryImpl implements NavigationRepository {
 
       // Get connections from configurable node for more detailed routing
       final configurableNode = configurableNodeMap[current.uid];
+      debugPrint('🔍 Processing node: ${configurableNode?.name ?? current.uid}');
       
-      // Get direct outgoing connections from this node
+      // Build list of valid neighbors we can traverse TO from current node
+      final validNeighborIds = <String>{};
+      
+      // 1. Direct outgoing connections from this node (we can always follow our own outgoing connections)
       final directConnections = configurableNode?.connections ?? [];
+      for (final conn in directConnections) {
+        validNeighborIds.add(conn.targetNodeId);
+        debugPrint('   → Direct outgoing: ${current.uid} → ${conn.targetNodeId} (bidirectional: ${conn.isBidirectional})');
+      }
       
-      // Also check for incoming bidirectional connections from other nodes
-      final incomingBidirectionalConnections = <String>[];
+      // 2. Incoming bidirectional connections from other nodes
+      // If another node has a BIDIRECTIONAL connection pointing to us, we can traverse back to them
       for (final otherNode in configurableNodeMap.values) {
         if (otherNode.id == current.uid) continue;
         for (final conn in otherNode.connections) {
           if (conn.targetNodeId == current.uid && conn.isBidirectional) {
-            incomingBidirectionalConnections.add(otherNode.id);
+            validNeighborIds.add(otherNode.id);
+            debugPrint('   ← Incoming bidirectional: ${otherNode.id} ↔ ${current.uid}');
           }
         }
       }
-      
-      // Combine: direct outgoing + incoming bidirectional
-      final connectionIds = {
-        ...directConnections.map((c) => c.targetNodeId),
-        ...incomingBidirectionalConnections,
-      }.toList();
 
-      for (final neighborUid in connectionIds) {
+      for (final neighborUid in validNeighborIds) {
         if (visited.contains(neighborUid)) continue;
 
         final neighbor = allBeacons.firstWhereOrNull((b) => b.uid == neighborUid);
@@ -840,4 +931,109 @@ class _NodeDistance {
   final double distance;
 
   _NodeDistance(this.uid, this.distance);
+}
+
+extension _OneWayRestrictionCheck on NavigationRepositoryImpl {
+  /// Check if the route from start to end is blocked by one-way restrictions.
+  /// Returns a descriptive error message if blocked, null otherwise.
+  String? _checkOneWayRestriction(
+    BeaconNode start,
+    BeaconNode end,
+    Map<String, ConfigurableNode> configurableNodeMap,
+  ) {
+    debugPrint('🔍 Checking one-way restriction: ${start.name} (${start.uid}) → ${end.name} (${end.uid})');
+    
+    final startNode = configurableNodeMap[start.uid];
+    final endNode = configurableNodeMap[end.uid];
+    
+    debugPrint('   Start node in config: ${startNode != null}');
+    debugPrint('   End node in config: ${endNode != null}');
+    
+    if (startNode != null) {
+      debugPrint('   Start node connections: ${startNode.connections.map((c) => "${c.targetNodeId} (bidir: ${c.isBidirectional})").join(", ")}');
+    }
+    if (endNode != null) {
+      debugPrint('   End node connections: ${endNode.connections.map((c) => "${c.targetNodeId} (bidir: ${c.isBidirectional})").join(", ")}');
+    }
+    
+    // Check if there's a direct one-way connection from end to start (reverse direction)
+    if (endNode != null) {
+      for (final connection in endNode.connections) {
+        if (connection.targetNodeId == start.uid && !connection.isBidirectional) {
+          // There's a one-way connection from end → start, but user wants start → end
+          debugPrint('   ❌ BLOCKED: Direct one-way from end to start');
+          return 'Cannot navigate this direction. This is a one-way route from ${end.name} to ${start.name}.';
+        }
+      }
+    }
+    
+    // Check if start has no outgoing connections to end, but end has to start
+    if (startNode != null && endNode != null) {
+      final startHasConnectionToEnd = startNode.connections.any((c) => c.targetNodeId == end.uid);
+      final endHasConnectionToStart = endNode.connections.any((c) => c.targetNodeId == start.uid);
+      
+      debugPrint('   Start has connection to end: $startHasConnectionToEnd');
+      debugPrint('   End has connection to start: $endHasConnectionToStart');
+      
+      if (!startHasConnectionToEnd && endHasConnectionToStart) {
+        final connection = endNode.connections.firstWhere((c) => c.targetNodeId == start.uid);
+        if (!connection.isBidirectional) {
+          debugPrint('   ❌ BLOCKED: One-way only from end to start');
+          return 'This route is one-way only. You can only travel from ${end.name} to ${start.name}, not the reverse.';
+        }
+      }
+    }
+    
+    // Check for indirect one-way blocking (path exists in reverse but not forward)
+    // by checking if we can reach start from end but not end from start
+    final canReachStartFromEnd = _canReachNode(end.uid, start.uid, configurableNodeMap, <String>{});
+    final canReachEndFromStart = _canReachNode(start.uid, end.uid, configurableNodeMap, <String>{});
+    
+    debugPrint('   Can reach start from end: $canReachStartFromEnd');
+    debugPrint('   Can reach end from start: $canReachEndFromStart');
+    
+    if (canReachStartFromEnd && !canReachEndFromStart) {
+      debugPrint('   ❌ BLOCKED: Indirect one-way restriction');
+      return 'Cannot navigate to ${end.name} from your current location. The route is configured as one-way in the opposite direction.';
+    }
+    
+    debugPrint('   ✅ No one-way restriction found');
+    return null;
+  }
+  
+  /// Check if we can reach targetId from sourceId following connection directions
+  bool _canReachNode(
+    String sourceId,
+    String targetId,
+    Map<String, ConfigurableNode> configurableNodeMap,
+    Set<String> visited,
+  ) {
+    if (sourceId == targetId) return true;
+    if (visited.contains(sourceId)) return false;
+    
+    visited.add(sourceId);
+    
+    final sourceNode = configurableNodeMap[sourceId];
+    if (sourceNode == null) return false;
+    
+    // Check direct outgoing connections
+    for (final connection in sourceNode.connections) {
+      if (_canReachNode(connection.targetNodeId, targetId, configurableNodeMap, visited)) {
+        return true;
+      }
+    }
+    
+    // Check incoming bidirectional connections (can traverse back)
+    for (final node in configurableNodeMap.values) {
+      for (final conn in node.connections) {
+        if (conn.targetNodeId == sourceId && conn.isBidirectional) {
+          if (_canReachNode(node.id, targetId, configurableNodeMap, visited)) {
+            return true;
+          }
+        }
+      }
+    }
+    
+    return false;
+  }
 }

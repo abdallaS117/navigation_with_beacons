@@ -20,7 +20,12 @@ import '../widgets/search_header.dart';
 import '../widgets/beacon_status_widget.dart';
 
 class IndoorMapView extends StatefulWidget {
-  const IndoorMapView({super.key});
+  final bool showConfigurationButton;
+  
+  const IndoorMapView({
+    super.key,
+    this.showConfigurationButton = false,
+  });
 
   @override
   State<IndoorMapView> createState() => _IndoorMapViewState();
@@ -212,21 +217,41 @@ class _IndoorMapViewState extends State<IndoorMapView>
               );
             }
             
-            // Handle error messages
+            // Handle error messages - show popup dialog for route errors
             if (state.errorMessage != null) {
-              ScaffoldMessenger.of(context).showSnackBar(
-                SnackBar(
-                content: Text(state.errorMessage!),
-                backgroundColor: Colors.red,
-                action: SnackBarAction(
-                  label: 'Dismiss',
-                  textColor: Colors.white,
-                  onPressed: () {
-                    context.read<NavigationCubit>().clearError();
-                  },
+              // Clear the error first to prevent showing multiple dialogs
+              final errorMsg = state.errorMessage!;
+              context.read<NavigationCubit>().clearError();
+              
+              // Show popup dialog to force user to acknowledge
+              showDialog(
+                context: context,
+                barrierDismissible: false,
+                builder: (dialogContext) => AlertDialog(
+                  title: const Row(
+                    children: [
+                      Icon(Icons.warning_amber_rounded, color: Colors.red, size: 28),
+                      SizedBox(width: 8),
+                      Text('Cannot Navigate'),
+                    ],
+                  ),
+                  content: Text(
+                    errorMsg,
+                    style: const TextStyle(fontSize: 16),
+                  ),
+                  actions: [
+                    ElevatedButton(
+                      style: ElevatedButton.styleFrom(
+                        backgroundColor: Colors.blue,
+                      ),
+                      onPressed: () {
+                        Navigator.of(dialogContext).pop();
+                      },
+                      child: const Text('Select Another Destination'),
+                    ),
+                  ],
                 ),
-              ),
-            );
+              );
           }
         },
         builder: (context, navState) {
@@ -271,19 +296,20 @@ class _IndoorMapViewState extends State<IndoorMapView>
                         ),
                       ),
 
-                      // Configuration Button
-                      Positioned(
-                        right: 16,
-                        bottom: (navState.selectedDestination != null ? 270 : 150) +
-                            MediaQuery.of(context).padding.bottom,
-                        child: FloatingActionButton.small(
-                          heroTag: 'config',
-                          backgroundColor: Colors.white,
-                          foregroundColor: Colors.grey[700],
-                          onPressed: () => _openConfiguration(context),
-                          child: const Icon(Icons.settings),
+                      // Configuration Button (only shown if enabled)
+                      if (widget.showConfigurationButton)
+                        Positioned(
+                          right: 16,
+                          bottom: (navState.selectedDestination != null ? 270 : 150) +
+                              MediaQuery.of(context).padding.bottom,
+                          child: FloatingActionButton.small(
+                            heroTag: 'config',
+                            backgroundColor: Colors.white,
+                            foregroundColor: Colors.grey[700],
+                            onPressed: () => _openConfiguration(context),
+                            child: const Icon(Icons.settings),
+                          ),
                         ),
-                      ),
 
                       // Center on User Button
                       Positioned(

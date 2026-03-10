@@ -98,7 +98,9 @@ class HospitalNavigationApp extends StatelessWidget {
           title: 'Hospital Indoor Navigation',
           debugShowCheckedModeBanner: false,
           theme: AppTheme.lightTheme,
-          home: const IndoorMapView(),
+          home: const IndoorMapView(
+            showConfigurationButton: true,
+          ),
         ),
       ),
     );
