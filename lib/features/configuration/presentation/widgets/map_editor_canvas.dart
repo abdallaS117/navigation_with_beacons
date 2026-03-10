@@ -126,7 +126,7 @@ class _MapEditorCanvasState extends State<MapEditorCanvas> {
                 border: Border.all(color: Colors.grey[400]!),
                 image: floorImagePath != null
                     ? DecorationImage(
-                        image: floorImagePath.startsWith('assets/')
+                        image: (floorImagePath.startsWith('assets/') || floorImagePath.startsWith('packages/'))
                             ? AssetImage(floorImagePath) as ImageProvider
                             : FileImage(File(floorImagePath)),
                         fit: BoxFit.cover,

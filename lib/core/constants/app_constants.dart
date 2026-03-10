@@ -42,4 +42,7 @@ class AppConstants {
   static const String heartDepartmentId = 'heart_department';
   static const String elevatorId = 'elevator';
   static const String stairsId = 'stairs';
+
+  // Default floor image (with package prefix for use in other apps)
+  static const String defaultFloorImage = 'packages/beacon_navigation/assets/images/default_floor_plan.png';
 }
