@@ -84,13 +84,14 @@ class _IndoorMapViewState extends State<IndoorMapView>
   }
 
   void _showDestinationSelector(BuildContext context) {
-    final navigationState = context.read<NavigationCubit>().state;
+    final navigationCubit = context.read<NavigationCubit>();
+    final navigationState = navigationCubit.state;
 
     showModalBottomSheet(
       context: context,
       isScrollControlled: true,
       backgroundColor: Colors.transparent,
-      builder: (context) => Container(
+      builder: (bottomSheetContext) => Container(
         decoration: const BoxDecoration(
           color: Colors.white,
           borderRadius: BorderRadius.vertical(top: Radius.circular(20)),
@@ -99,8 +100,8 @@ class _IndoorMapViewState extends State<IndoorMapView>
           departments: navigationState.departments,
           selectedDepartment: navigationState.selectedDestination,
           onDepartmentSelected: (department) {
-            context.read<NavigationCubit>().selectDestination(department);
-            Navigator.pop(context);
+            navigationCubit.selectDestination(department);
+            Navigator.pop(bottomSheetContext);
           },
         ),
       ),
