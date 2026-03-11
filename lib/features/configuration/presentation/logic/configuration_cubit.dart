@@ -507,7 +507,12 @@ class ConfigurationCubit extends Cubit<ConfigurationState> {
       
       // Load default configuration
       final defaultConfig = NavigationConfig.empty();
+      
+      // Save locally
       await _repository.saveConfiguration(defaultConfig);
+      
+      // Also upload to Firebase to sync the reset across devices
+      await _repository.uploadToFirebase();
       
       emit(state.copyWith(
         status: ConfigurationStatus.loaded,
