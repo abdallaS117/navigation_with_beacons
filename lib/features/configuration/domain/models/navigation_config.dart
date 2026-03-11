@@ -1,5 +1,4 @@
 import 'package:equatable/equatable.dart';
-import '../../../../core/constants/app_constants.dart';
 import 'configurable_beacon.dart';
 import 'configurable_node.dart';
 import 'map_layout_config.dart';
@@ -99,7 +98,6 @@ class NavigationConfig extends Equatable {
           FloorConfig(
             floorNumber: 1,
             name: 'Floor 1',
-            imagePath: AppConstants.defaultFloorImage,
           ),
         ],
       ),

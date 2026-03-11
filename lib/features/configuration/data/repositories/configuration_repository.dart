@@ -26,27 +26,42 @@ class ConfigurationRepository {
     return _cachedConfig!;
   }
   
-  /// Migrates old asset paths (assets/) to package-prefixed paths (packages/beacon_navigation/assets/)
+  /// Removes old asset paths and invalid file picker cache paths
   NavigationConfig _migrateAssetPaths(NavigationConfig config) {
     bool needsMigration = false;
     
     final migratedFloors = config.mapConfig.floors.map((floor) {
-      if (floor.imagePath != null && 
-          floor.imagePath!.startsWith('assets/') && 
-          !floor.imagePath!.startsWith('packages/')) {
-        needsMigration = true;
-        return FloorConfig(
-          floorNumber: floor.floorNumber,
-          name: floor.name,
-          imagePath: 'packages/beacon_navigation/${floor.imagePath}',
-          isActive: floor.isActive,
-        );
+      if (floor.imagePath != null) {
+        // Remove asset paths (both assets/ and packages/ prefixes)
+        if (floor.imagePath!.startsWith('assets/') || 
+            floor.imagePath!.startsWith('packages/')) {
+          needsMigration = true;
+          print('🔄 Removing asset path: ${floor.imagePath}');
+          return FloorConfig(
+            floorNumber: floor.floorNumber,
+            name: floor.name,
+            imagePath: null,
+            isActive: floor.isActive,
+          );
+        }
+        
+        // Remove file picker cache paths (temporary paths that no longer exist)
+        if (floor.imagePath!.contains('/cache/file_picker/')) {
+          needsMigration = true;
+          print('🔄 Removing invalid cache path: ${floor.imagePath}');
+          return FloorConfig(
+            floorNumber: floor.floorNumber,
+            name: floor.name,
+            imagePath: null,
+            isActive: floor.isActive,
+          );
+        }
       }
       return floor;
     }).toList();
     
     if (needsMigration) {
-      print('🔄 Migrating asset paths to package-prefixed format');
+      print('✅ Migration complete - invalid image paths removed');
       final updatedMapConfig = config.mapConfig.copyWith(floors: migratedFloors);
       final migratedConfig = config.copyWith(mapConfig: updatedMapConfig);
       
@@ -354,9 +369,12 @@ class ConfigurationRepository {
     final firebaseConfig = await _firebaseService!.downloadConfiguration();
     
     if (firebaseConfig != null) {
-      // Firebase config exists, use it and save locally
-      await saveConfiguration(firebaseConfig);
-      return firebaseConfig;
+      // Apply migration to remove old asset paths
+      final migratedConfig = _migrateAssetPaths(firebaseConfig);
+      
+      // Save migrated config locally
+      await saveConfiguration(migratedConfig);
+      return migratedConfig;
     } else {
       // No Firebase config, use local
       print('ℹ️ No Firebase config found, using local configuration');

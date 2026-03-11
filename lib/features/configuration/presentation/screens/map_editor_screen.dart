@@ -1,7 +1,6 @@
 import 'package:flutter/material.dart';
 import 'package:flutter_bloc/flutter_bloc.dart';
 import 'package:file_picker/file_picker.dart';
-import '../../../../core/constants/app_constants.dart';
 import '../../domain/models/models.dart';
 import '../logic/configuration_cubit.dart';
 import '../logic/configuration_state.dart';
@@ -869,7 +868,6 @@ class MapEditorScreen extends StatelessWidget {
       floors.add(FloorConfig(
         floorNumber: nextFloorNumber,
         name: floorName,
-        imagePath: AppConstants.defaultFloorImage,
       ));
       
       final updatedMapConfig = mapConfig.copyWith(floors: floors);
@@ -989,6 +987,38 @@ class MapEditorScreen extends StatelessWidget {
     if (config == null) return;
     
     final mapConfig = config.mapConfig;
+    
+    // If this is the last floor, clear all elements instead of deleting
+    if (mapConfig.floors.length == 1) {
+      // Remove all beacons from this floor
+      for (final beacon in config.beacons.where((b) => b.floor == floor.floorNumber)) {
+        await context.read<ConfigurationCubit>().unplaceBeacon(beacon.id);
+      }
+      
+      // Remove all nodes from this floor
+      for (final node in config.nodes.where((n) => n.floor == floor.floorNumber)) {
+        await context.read<ConfigurationCubit>().removeNode(node.id);
+      }
+      
+      // Clear the floor image
+      final clearedFloor = FloorConfig(
+        floorNumber: floor.floorNumber,
+        name: floor.name,
+        imagePath: null,
+        isActive: floor.isActive,
+      );
+      
+      final updatedFloors = [clearedFloor];
+      final updatedMapConfig = mapConfig.copyWith(floors: updatedFloors);
+      await context.read<ConfigurationCubit>().updateMapConfig(updatedMapConfig);
+      
+      if (context.mounted) {
+        ScaffoldMessenger.of(context).showSnackBar(
+          const SnackBar(content: Text('Floor cleared - all elements removed')),
+        );
+      }
+      return;
+    }
     
     // Remove the floor
     final floors = mapConfig.floors.where((f) => f.floorNumber != floor.floorNumber).toList();
