@@ -956,45 +956,22 @@ extension _OneWayRestrictionCheck on NavigationRepositoryImpl {
       debugPrint('   End node connections: ${endNode.connections.map((c) => "${c.targetNodeId} (bidir: ${c.isBidirectional})").join(", ")}');
     }
     
-    // Check if there's a direct one-way connection from end to start (reverse direction)
-    if (endNode != null) {
-      for (final connection in endNode.connections) {
-        if (connection.targetNodeId == start.uid && !connection.isBidirectional) {
-          // There's a one-way connection from end → start, but user wants start → end
-          debugPrint('   ❌ BLOCKED: Direct one-way from end to start');
-          return 'Cannot navigate this direction. This is a one-way route from ${end.name} to ${start.name}.';
-        }
-      }
-    }
-    
-    // Check if start has no outgoing connections to end, but end has to start
-    if (startNode != null && endNode != null) {
-      final startHasConnectionToEnd = startNode.connections.any((c) => c.targetNodeId == end.uid);
-      final endHasConnectionToStart = endNode.connections.any((c) => c.targetNodeId == start.uid);
-      
-      debugPrint('   Start has connection to end: $startHasConnectionToEnd');
-      debugPrint('   End has connection to start: $endHasConnectionToStart');
-      
-      if (!startHasConnectionToEnd && endHasConnectionToStart) {
-        final connection = endNode.connections.firstWhere((c) => c.targetNodeId == start.uid);
-        if (!connection.isBidirectional) {
-          debugPrint('   ❌ BLOCKED: One-way only from end to start');
-          return 'This route is one-way only. You can only travel from ${end.name} to ${start.name}, not the reverse.';
-        }
-      }
-    }
-    
-    // Check for indirect one-way blocking (path exists in reverse but not forward)
-    // by checking if we can reach start from end but not end from start
-    final canReachStartFromEnd = _canReachNode(end.uid, start.uid, configurableNodeMap, <String>{});
+    // Only block if there's absolutely no way to reach the destination
+    // Check if we can reach end from start through ANY path (direct or indirect)
     final canReachEndFromStart = _canReachNode(start.uid, end.uid, configurableNodeMap, <String>{});
     
-    debugPrint('   Can reach start from end: $canReachStartFromEnd');
-    debugPrint('   Can reach end from start: $canReachEndFromStart');
+    debugPrint('   Can reach end from start (any path): $canReachEndFromStart');
     
-    if (canReachStartFromEnd && !canReachEndFromStart) {
-      debugPrint('   ❌ BLOCKED: Indirect one-way restriction');
-      return 'Cannot navigate to ${end.name} from your current location. The route is configured as one-way in the opposite direction.';
+    if (!canReachEndFromStart) {
+      // Double-check: is there a reverse one-way that's blocking us?
+      final canReachStartFromEnd = _canReachNode(end.uid, start.uid, configurableNodeMap, <String>{});
+      debugPrint('   Can reach start from end: $canReachStartFromEnd');
+      
+      if (canReachStartFromEnd) {
+        debugPrint('   ❌ BLOCKED: Route exists only in reverse direction (one-way restriction)');
+        return 'Cannot navigate to ${end.name} from your current location. The route is configured as one-way in the opposite direction.';
+      }
+      // If neither direction works, let Dijkstra handle it (might be disconnected nodes)
     }
     
     debugPrint('   ✅ No one-way restriction found');
