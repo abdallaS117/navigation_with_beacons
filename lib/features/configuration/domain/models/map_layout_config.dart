@@ -127,20 +127,39 @@ class FloorConfig extends Equatable {
   final int floorNumber;
   final String name;
   final String? imagePath;
+  final String? imageBase64; // Base64 encoded image for remote storage
   final bool isActive;
 
   const FloorConfig({
     required this.floorNumber,
     required this.name,
     this.imagePath,
+    this.imageBase64,
     this.isActive = true,
   });
+
+  FloorConfig copyWith({
+    int? floorNumber,
+    String? name,
+    String? imagePath,
+    String? imageBase64,
+    bool? isActive,
+  }) {
+    return FloorConfig(
+      floorNumber: floorNumber ?? this.floorNumber,
+      name: name ?? this.name,
+      imagePath: imagePath ?? this.imagePath,
+      imageBase64: imageBase64 ?? this.imageBase64,
+      isActive: isActive ?? this.isActive,
+    );
+  }
 
   Map<String, dynamic> toJson() {
     return {
       'floorNumber': floorNumber,
       'name': name,
       'imagePath': imagePath,
+      'imageBase64': imageBase64,
       'isActive': isActive,
     };
   }
@@ -150,10 +169,11 @@ class FloorConfig extends Equatable {
       floorNumber: json['floorNumber'] as int,
       name: json['name'] as String,
       imagePath: json['imagePath'] as String?,
+      imageBase64: json['imageBase64'] as String?,
       isActive: json['isActive'] as bool? ?? true,
     );
   }
 
   @override
-  List<Object?> get props => [floorNumber, name, imagePath, isActive];
+  List<Object?> get props => [floorNumber, name, imagePath, imageBase64, isActive];
 }

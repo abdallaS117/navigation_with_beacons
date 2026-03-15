@@ -54,7 +54,14 @@ class BeaconCubit extends Cubit<BeaconState> {
   }
 
   Future<void> reloadConfiguration() async {
+    // Stop current scanning
+    await stopScanning();
+    
+    // Reload configuration from repository
     await _beaconRepository.reloadConfiguration();
+    
+    // Restart scanning with new configuration
+    await startScanning();
   }
 
   @override

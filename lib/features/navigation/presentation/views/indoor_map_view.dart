@@ -139,6 +139,73 @@ class _IndoorMapViewState extends State<IndoorMapView>
     }
   }
 
+  Future<void> _refreshConfiguration(BuildContext context) async {
+    try {
+      // Show loading indicator
+      ScaffoldMessenger.of(context).showSnackBar(
+        const SnackBar(
+          content: Row(
+            children: [
+              SizedBox(
+                width: 20,
+                height: 20,
+                child: CircularProgressIndicator(
+                  strokeWidth: 2,
+                  valueColor: AlwaysStoppedAnimation<Color>(Colors.white),
+                ),
+              ),
+              SizedBox(width: 16),
+              Text('Refreshing from Firebase...'),
+            ],
+          ),
+          duration: Duration(seconds: 30),
+        ),
+      );
+
+      // Refresh configuration from Firebase
+      await context.read<ConfigurationCubit>().refreshFromFirebase();
+      
+      // Reload beacon and navigation data
+      if (context.mounted) {
+        await context.read<BeaconCubit>().reloadConfiguration();
+        await context.read<NavigationCubit>().initialize();
+        
+        // Clear previous snackbar and show success
+        ScaffoldMessenger.of(context).clearSnackBars();
+        ScaffoldMessenger.of(context).showSnackBar(
+          const SnackBar(
+            content: Row(
+              children: [
+                Icon(Icons.check_circle, color: Colors.white),
+                SizedBox(width: 16),
+                Text('Configuration refreshed successfully'),
+              ],
+            ),
+            backgroundColor: Colors.green,
+            duration: Duration(seconds: 2),
+          ),
+        );
+      }
+    } catch (e) {
+      if (context.mounted) {
+        ScaffoldMessenger.of(context).clearSnackBars();
+        ScaffoldMessenger.of(context).showSnackBar(
+          SnackBar(
+            content: Row(
+              children: [
+                const Icon(Icons.error, color: Colors.white),
+                const SizedBox(width: 16),
+                Expanded(child: Text('Refresh failed: $e')),
+              ],
+            ),
+            backgroundColor: Colors.red,
+            duration: const Duration(seconds: 4),
+          ),
+        );
+      }
+    }
+  }
+
   @override
   Widget build(BuildContext context) {
     return PopScope(
@@ -297,21 +364,6 @@ class _IndoorMapViewState extends State<IndoorMapView>
                         ),
                       ),
 
-                      // Configuration Button (only shown if enabled)
-                      if (widget.showConfigurationButton)
-                        Positioned(
-                          right: 16,
-                          bottom: (navState.selectedDestination != null ? 270 : 150) +
-                              MediaQuery.of(context).padding.bottom,
-                          child: FloatingActionButton.small(
-                            heroTag: 'config',
-                            backgroundColor: Colors.white,
-                            foregroundColor: Colors.grey[700],
-                            onPressed: () => _openConfiguration(context),
-                            child: const Icon(Icons.settings),
-                          ),
-                        ),
-
                       // Center on User Button
                       Positioned(
                         right: 16,
@@ -325,6 +377,35 @@ class _IndoorMapViewState extends State<IndoorMapView>
                           child: const Icon(Icons.my_location),
                         ),
                       ),
+
+                      // Refresh Configuration Button
+                      Positioned(
+                        right: 16,
+                        bottom: (navState.selectedDestination != null ? 220 : 100) +
+                            MediaQuery.of(context).padding.bottom + 50,
+                        child: FloatingActionButton.small(
+                          heroTag: 'refresh_config',
+                          backgroundColor: Colors.white,
+                          foregroundColor: Colors.blue,
+                          onPressed: () => _refreshConfiguration(context),
+                          child: const Icon(Icons.refresh),
+                        ),
+                      ),
+
+                      // Configuration Button (only shown if enabled)
+                      if (widget.showConfigurationButton)
+                        Positioned(
+                          right: 16,
+                          bottom: (navState.selectedDestination != null ? 220 : 100) +
+                              MediaQuery.of(context).padding.bottom + 100,
+                          child: FloatingActionButton.small(
+                            heroTag: 'config',
+                            backgroundColor: Colors.white,
+                            foregroundColor: Colors.grey[700],
+                            onPressed: () => _openConfiguration(context),
+                            child: const Icon(Icons.settings),
+                          ),
+                        ),
 
                       // Navigation info panel
                       if (navState.isNavigating && navState.currentRoute != null)
@@ -393,9 +474,10 @@ class _IndoorMapViewState extends State<IndoorMapView>
         child: Stack(
           children: [
             // Floor image (if configured) or default map painter
-            if (currentFloorConfig?.imagePath != null)
+            if (currentFloorConfig?.imagePath != null || currentFloorConfig?.imageBase64 != null)
               SmartMapImage(
-                imagePath: currentFloorConfig!.imagePath,
+                imagePath: currentFloorConfig?.imagePath,
+                imageBase64: currentFloorConfig?.imageBase64,
                 width: mapWidth,
                 height: mapHeight,
                 fit: BoxFit.cover,

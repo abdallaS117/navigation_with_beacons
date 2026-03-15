@@ -25,6 +25,38 @@ class ConfigurationCubit extends Cubit<ConfigurationState> {
     }
   }
 
+  /// Force refresh configuration from Firebase (ignores cache)
+  Future<void> refreshFromFirebase() async {
+    emit(state.copyWith(status: ConfigurationStatus.loading));
+    try {
+      // Clear cache first to force fresh download
+      _repository.clearCache();
+      
+      // Download from Firebase
+      final success = await _repository.downloadFromFirebase();
+      
+      if (success) {
+        // Reload the configuration
+        final config = await _repository.getConfiguration();
+        emit(state.copyWith(
+          status: ConfigurationStatus.loaded,
+          config: config,
+          isDirty: false,
+        ));
+      } else {
+        emit(state.copyWith(
+          status: ConfigurationStatus.error,
+          errorMessage: 'Failed to refresh from Firebase',
+        ));
+      }
+    } catch (e) {
+      emit(state.copyWith(
+        status: ConfigurationStatus.error,
+        errorMessage: e.toString(),
+      ));
+    }
+  }
+
   Future<void> saveConfiguration() async {
     if (state.config == null) return;
     
