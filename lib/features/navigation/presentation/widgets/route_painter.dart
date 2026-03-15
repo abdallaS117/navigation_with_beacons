@@ -41,7 +41,12 @@ class RoutePainter extends CustomPainter {
   void _drawRouteLine(Canvas canvas, List<BeaconNode> nodes) {
     if (nodes.length < 2) return;
 
-    // Subtle glow/shadow under route
+    // Always draw the full route on this floor from first to last node
+    // The route already represents the path from current position to destination
+    // No need to skip nodes - just draw the entire floor segment
+    const int startIndex = 0;
+
+    // Subtle glow/shadow under remaining route
     final glowPaint = Paint()
       ..color = AppColors.routeLineGlow
       ..style = PaintingStyle.stroke
@@ -51,76 +56,23 @@ class RoutePainter extends CustomPainter {
       ..maskFilter = const MaskFilter.blur(BlurStyle.normal, 2);
 
     final routePath = Path();
-    routePath.moveTo(nodes.first.x, nodes.first.y);
+    routePath.moveTo(nodes[startIndex].x, nodes[startIndex].y);
 
-    for (int i = 1; i < nodes.length; i++) {
+    for (int i = startIndex + 1; i < nodes.length; i++) {
       routePath.lineTo(nodes[i].x, nodes[i].y);
     }
 
     canvas.drawPath(routePath, glowPaint);
 
-    // Find current position in floor nodes
-    int floorCurrentIndex = -1;
-    for (int i = 0; i < nodes.length; i++) {
-      final globalIndex = route!.nodes.indexOf(nodes[i]);
-      if (globalIndex <= currentNodeIndex) {
-        floorCurrentIndex = i;
-      }
-    }
+    // Draw remaining route (blue) - from current position to destination
+    final pendingPaint = Paint()
+      ..color = AppColors.routeLine
+      ..style = PaintingStyle.stroke
+      ..strokeWidth = AppConstants.routeLineWidth
+      ..strokeCap = StrokeCap.round
+      ..strokeJoin = StrokeJoin.round;
 
-    // Draw completed portion (green)
-    if (floorCurrentIndex > 0) {
-      final completedPaint = Paint()
-        ..color = AppColors.routeCompleted
-        ..style = PaintingStyle.stroke
-        ..strokeWidth = AppConstants.routeLineWidth
-        ..strokeCap = StrokeCap.round
-        ..strokeJoin = StrokeJoin.round;
-
-      final completedPath = Path();
-      completedPath.moveTo(nodes.first.x, nodes.first.y);
-
-      for (int i = 1; i <= floorCurrentIndex && i < nodes.length; i++) {
-        completedPath.lineTo(nodes[i].x, nodes[i].y);
-      }
-      canvas.drawPath(completedPath, completedPaint);
-    }
-
-    // Draw pending portion (blue)
-    if (floorCurrentIndex < nodes.length - 1) {
-      final startIndex = max(0, floorCurrentIndex);
-      final pendingPaint = Paint()
-        ..color = AppColors.routeLine
-        ..style = PaintingStyle.stroke
-        ..strokeWidth = AppConstants.routeLineWidth
-        ..strokeCap = StrokeCap.round
-        ..strokeJoin = StrokeJoin.round;
-
-      final pendingPath = Path();
-      pendingPath.moveTo(nodes[startIndex].x, nodes[startIndex].y);
-
-      for (int i = startIndex + 1; i < nodes.length; i++) {
-        pendingPath.lineTo(nodes[i].x, nodes[i].y);
-      }
-      canvas.drawPath(pendingPath, pendingPaint);
-    }
-
-    // Draw current position node
-    if (floorCurrentIndex >= 0 && floorCurrentIndex < nodes.length) {
-      final node = nodes[floorCurrentIndex];
-      final nodePaint = Paint()
-        ..color = AppColors.routeCompleted
-        ..style = PaintingStyle.fill;
-
-      canvas.drawCircle(Offset(node.x, node.y), 5.0, nodePaint);
-
-      final borderPaint = Paint()
-        ..color = Colors.white
-        ..style = PaintingStyle.stroke
-        ..strokeWidth = 1.5;
-
-      canvas.drawCircle(Offset(node.x, node.y), 5.0, borderPaint);
-    }
+    canvas.drawPath(routePath, pendingPaint);
   }
 
   void _drawDestinationMarker(Canvas canvas, BeaconNode destination) {

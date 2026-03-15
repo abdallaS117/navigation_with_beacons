@@ -153,8 +153,10 @@ class PathfindingHelper {
       return dijkstraPath;
     }
 
-    debugPrint('   ⚠️ Dijkstra failed, trying proximity-based routing');
-    return proximityBasedPath(start, end, floorNodes);
+    // Do NOT fall back to proximity-based routing as it ignores one-way restrictions
+    // If Dijkstra fails, it means there's no valid path considering connection directions
+    debugPrint('   ❌ No valid path found (one-way restrictions may apply)');
+    return [];
   }
 
   /// Find path using proximity-based connections.
