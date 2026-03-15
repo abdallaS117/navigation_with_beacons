@@ -365,18 +365,18 @@ class _IndoorMapViewState extends State<IndoorMapView>
                       ),
 
                       // Center on User Button
-                      Positioned(
-                        right: 16,
-                        bottom: (navState.selectedDestination != null ? 220 : 100) +
-                            MediaQuery.of(context).padding.bottom,
-                        child: FloatingActionButton.small(
-                          heroTag: 'center_user',
-                          backgroundColor: Colors.white,
-                          foregroundColor: AppColors.primary,
-                          onPressed: () => _centerOnUser(beaconState.currentBeacon),
-                          child: const Icon(Icons.my_location),
-                        ),
-                      ),
+                      // Positioned(
+                      //   right: 16,
+                      //   bottom: (navState.selectedDestination != null ? 220 : 100) +
+                      //       MediaQuery.of(context).padding.bottom,
+                      //   child: FloatingActionButton.small(
+                      //     heroTag: 'center_user',
+                      //     backgroundColor: Colors.white,
+                      //     foregroundColor: AppColors.primary,
+                      //     onPressed: () => _centerOnUser(beaconState.currentBeacon),
+                      //     child: const Icon(Icons.my_location),
+                      //   ),
+                      // ),
 
                       // Refresh Configuration Button
                       Positioned(
