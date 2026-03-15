@@ -1,5 +1,9 @@
+import 'dart:convert';
+import 'dart:io';
 import 'package:cloud_firestore/cloud_firestore.dart';
+import 'package:flutter/foundation.dart';
 import '../../domain/models/navigation_config.dart';
+import '../../domain/models/map_layout_config.dart';
 
 /// Service for storing and retrieving navigation configuration from Firebase Firestore
 class FirebaseConfigurationService {
@@ -15,9 +19,13 @@ class FirebaseConfigurationService {
 
   /// Upload configuration to Firestore
   /// Returns true if successful, false otherwise
+  /// Encodes local floor images to Base64 before uploading
   Future<bool> uploadConfiguration(NavigationConfig config) async {
     try {
-      final data = config.toJson();
+      // Encode floor images to Base64 before uploading
+      final configWithEncodedImages = await _encodeFloorImages(config);
+      
+      final data = configWithEncodedImages.toJson();
       data['updatedAt'] = FieldValue.serverTimestamp();
       data['version'] = DateTime.now().millisecondsSinceEpoch;
 
@@ -26,12 +34,58 @@ class FirebaseConfigurationService {
           .doc(documentId)
           .set(data, SetOptions(merge: true));
 
-      print('✅ Configuration uploaded to Firestore successfully');
+      debugPrint('✅ Configuration uploaded to Firestore successfully');
       return true;
     } catch (e) {
-      print('❌ Error uploading configuration to Firestore: $e');
+      debugPrint('❌ Error uploading configuration to Firestore: $e');
       return false;
     }
+  }
+
+  /// Encode local floor images to Base64 for Firestore storage
+  Future<NavigationConfig> _encodeFloorImages(NavigationConfig config) async {
+    final floors = <FloorConfig>[];
+    
+    for (final floor in config.mapConfig.floors) {
+      // If there's a local file path, encode it to Base64
+      if (floor.imagePath != null && 
+          floor.imagePath!.isNotEmpty &&
+          !floor.imagePath!.startsWith('assets/') &&
+          !floor.imagePath!.startsWith('packages/')) {
+        try {
+          final file = File(floor.imagePath!);
+          if (await file.exists()) {
+            final bytes = await file.readAsBytes();
+            final base64String = base64Encode(bytes);
+            
+            // Check size (Firestore doc limit is ~1MB, Base64 adds ~33% overhead)
+            final sizeKB = base64String.length / 1024;
+            if (sizeKB > 900) {
+              debugPrint('⚠️ Floor ${floor.floorNumber} image is too large (${sizeKB.toStringAsFixed(0)}KB). Consider compressing.');
+            }
+            
+            debugPrint('📷 Encoded floor ${floor.floorNumber} image to Base64 (${sizeKB.toStringAsFixed(0)}KB)');
+            
+            floors.add(FloorConfig(
+              floorNumber: floor.floorNumber,
+              name: floor.name,
+              imagePath: null, // Clear local path for remote storage
+              imageBase64: base64String,
+              isActive: floor.isActive,
+            ));
+            continue;
+          }
+        } catch (e) {
+          debugPrint('⚠️ Failed to encode floor ${floor.floorNumber} image: $e');
+        }
+      }
+      
+      // Keep existing floor config (may already have imageBase64)
+      floors.add(floor);
+    }
+    
+    final updatedMapConfig = config.mapConfig.copyWith(floors: floors);
+    return config.copyWith(mapConfig: updatedMapConfig);
   }
 
   /// Download configuration from Firestore

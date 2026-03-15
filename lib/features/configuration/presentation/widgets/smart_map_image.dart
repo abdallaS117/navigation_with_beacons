@@ -1,16 +1,20 @@
+import 'dart:convert';
 import 'dart:io';
+import 'dart:typed_data';
 import 'package:flutter/material.dart';
 
-/// Widget that displays map images from local files only
+/// Widget that displays map images from local files or Base64 encoded strings
 class SmartMapImage extends StatelessWidget {
   final String? imagePath;
+  final String? imageBase64;
   final double? width;
   final double? height;
   final BoxFit fit;
 
   const SmartMapImage({
     super.key,
-    required this.imagePath,
+    this.imagePath,
+    this.imageBase64,
     this.width,
     this.height,
     this.fit = BoxFit.contain,
@@ -18,6 +22,12 @@ class SmartMapImage extends StatelessWidget {
 
   @override
   Widget build(BuildContext context) {
+    // Priority 1: Base64 encoded image (from Firestore)
+    if (imageBase64 != null && imageBase64!.isNotEmpty) {
+      return _buildBase64Image(imageBase64!);
+    }
+
+    // Priority 2: Local file path
     if (imagePath == null || imagePath!.isEmpty) {
       return _buildPlaceholder('No map image set', 'Pick an image to get started');
     }
@@ -29,6 +39,25 @@ class SmartMapImage extends StatelessWidget {
 
     // Display local file
     return _buildFileImage(imagePath!);
+  }
+
+  Widget _buildBase64Image(String base64String) {
+    try {
+      final Uint8List bytes = base64Decode(base64String);
+      return Image.memory(
+        bytes,
+        width: width,
+        height: height,
+        fit: fit,
+        errorBuilder: (context, error, stackTrace) {
+          debugPrint('❌ Error loading Base64 image: $error');
+          return _buildPlaceholder('Failed to decode image', 'Image data may be corrupted');
+        },
+      );
+    } catch (e) {
+      debugPrint('❌ Error decoding Base64 image: $e');
+      return _buildPlaceholder('Invalid image data', 'Failed to decode Base64');
+    }
   }
 
   Widget _buildAssetImage(String path) {
