@@ -3,11 +3,44 @@ import '../../data/repositories/configuration_repository.dart';
 import '../../domain/models/models.dart';
 import 'configuration_state.dart';
 
+/// Cubit for managing indoor navigation configuration state.
+/// 
+/// [ConfigurationCubit] handles all CRUD operations for:
+/// - Navigation nodes and their connections
+/// - BLE beacon registration and linking
+/// - Pre-defined routes
+/// - Floor configurations and map images
+/// 
+/// ## Usage
+/// 
+/// ```dart
+/// // Load configuration on startup
+/// context.read<ConfigurationCubit>().loadConfiguration();
+/// 
+/// // Add a new node
+/// context.read<ConfigurationCubit>().addNode(node);
+/// 
+/// // Save to Firebase
+/// context.read<ConfigurationCubit>().saveConfiguration();
+/// ```
+/// 
+/// ## State Flow
+/// 
+/// ```
+/// initial → loading → loaded → saving → saved
+///              ↓         ↓        ↓
+///            error     error    error
+/// ```
 class ConfigurationCubit extends Cubit<ConfigurationState> {
   final ConfigurationRepository _repository;
 
+  /// Creates a [ConfigurationCubit] with the given repository.
   ConfigurationCubit(this._repository) : super(const ConfigurationState());
 
+  /// Loads configuration from storage, syncing with Firebase.
+  /// 
+  /// On first load, downloads from Firebase if available.
+  /// Subsequent loads use cached data.
   Future<void> loadConfiguration() async {
     emit(state.copyWith(status: ConfigurationStatus.loading));
     try {
@@ -57,6 +90,10 @@ class ConfigurationCubit extends Cubit<ConfigurationState> {
     }
   }
 
+  /// Saves configuration to Firebase and local storage.
+  /// 
+  /// Uploads to Firebase as primary storage, then saves locally as backup.
+  /// Floor images are automatically encoded to Base64 before upload.
   Future<void> saveConfiguration() async {
     if (state.config == null) return;
     
@@ -316,11 +353,27 @@ class ConfigurationCubit extends Cubit<ConfigurationState> {
   }
 
   // Route Creation Methods
+  /// Starts creating a new route from scratch.
   void startRouteCreation() {
     emit(state.copyWith(
       mode: ConfigurationMode.createRoute,
       routeNodesInProgress: [],
       routeIdBeingEdited: null,
+    ));
+  }
+
+  /// Loads an existing route for editing.
+  /// 
+  /// This populates [routeNodesInProgress] with the route's current nodes,
+  /// allowing the user to modify the route path.
+  void startEditingRoute(String routeId) {
+    final route = state.config?.routes.firstWhere((r) => r.id == routeId);
+    if (route == null) return;
+
+    emit(state.copyWith(
+      mode: ConfigurationMode.createRoute,
+      routeNodesInProgress: List<String>.from(route.nodeIds),
+      routeIdBeingEdited: routeId,
     ));
   }
 
@@ -344,6 +397,10 @@ class ConfigurationCubit extends Cubit<ConfigurationState> {
     ));
   }
 
+  /// Saves the route currently being created or edited.
+  /// 
+  /// If [routeIdBeingEdited] is set, updates the existing route.
+  /// Otherwise, creates a new route.
   Future<void> saveRoute(String name, String? description, RouteType type) async {
     if (state.routeNodesInProgress.length < 2) {
       emit(state.copyWith(
@@ -355,7 +412,7 @@ class ConfigurationCubit extends Cubit<ConfigurationState> {
 
     try {
       final route = RouteConfig(
-        id: 'route_${DateTime.now().millisecondsSinceEpoch}',
+        id: state.routeIdBeingEdited ?? 'route_${DateTime.now().millisecondsSinceEpoch}',
         name: name,
         description: description,
         nodeIds: state.routeNodesInProgress,

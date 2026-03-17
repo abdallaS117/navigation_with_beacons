@@ -4,11 +4,13 @@ import '../../domain/models/models.dart';
 class RouteCreationDialog extends StatefulWidget {
   final List<String> nodeIds;
   final List<ConfigurableNode> allNodes;
+  final RouteConfig? existingRoute;
 
   const RouteCreationDialog({
     super.key,
     required this.nodeIds,
     required this.allNodes,
+    this.existingRoute,
   });
 
   @override
@@ -23,8 +25,9 @@ class _RouteCreationDialogState extends State<RouteCreationDialog> {
   @override
   void initState() {
     super.initState();
-    _nameController = TextEditingController();
-    _descriptionController = TextEditingController();
+    _nameController = TextEditingController(text: widget.existingRoute?.name ?? '');
+    _descriptionController = TextEditingController(text: widget.existingRoute?.description ?? '');
+    _selectedType = widget.existingRoute?.type ?? RouteType.normal;
   }
 
   @override
@@ -49,8 +52,10 @@ class _RouteCreationDialogState extends State<RouteCreationDialog> {
 
   @override
   Widget build(BuildContext context) {
+    final isEditing = widget.existingRoute != null;
+    
     return AlertDialog(
-      title: const Text('Save Route'),
+      title: Text(isEditing ? 'Update Route' : 'Save Route'),
       content: SingleChildScrollView(
         child: Column(
           mainAxisSize: MainAxisSize.min,
@@ -141,7 +146,7 @@ class _RouteCreationDialogState extends State<RouteCreationDialog> {
               'type': _selectedType,
             });
           },
-          child: const Text('Save Route'),
+          child: Text(isEditing ? 'Update Route' : 'Save Route'),
         ),
       ],
     );

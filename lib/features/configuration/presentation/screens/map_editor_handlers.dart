@@ -252,11 +252,20 @@ mixin MapEditorHandlers {
   }
 
   void saveRoute(BuildContext context, ConfigurationState state) async {
+    // Get existing route if we're editing
+    RouteConfig? existingRoute;
+    if (state.routeIdBeingEdited != null) {
+      existingRoute = state.config?.routes.firstWhere(
+        (r) => r.id == state.routeIdBeingEdited,
+      );
+    }
+
     final result = await showDialog<Map<String, dynamic>>(
       context: context,
       builder: (_) => RouteCreationDialog(
         nodeIds: state.routeNodesInProgress,
         allNodes: state.config?.nodes ?? [],
+        existingRoute: existingRoute,
       ),
     );
 
@@ -268,8 +277,9 @@ mixin MapEditorHandlers {
       );
 
       if (context.mounted) {
+        final action = existingRoute != null ? 'updated' : 'saved';
         ScaffoldMessenger.of(context).showSnackBar(
-          SnackBar(content: Text('Route "${result['name']}" saved successfully')),
+          SnackBar(content: Text('Route "${result['name']}" $action successfully')),
         );
       }
     }

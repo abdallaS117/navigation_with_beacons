@@ -188,6 +188,12 @@ class RoutesManagementScreen extends StatelessWidget {
                   mainAxisAlignment: MainAxisAlignment.end,
                   children: [
                     TextButton.icon(
+                      icon: const Icon(Icons.edit, color: Colors.blue),
+                      label: const Text('Edit', style: TextStyle(color: Colors.blue)),
+                      onPressed: () => _editRoute(context, route),
+                    ),
+                    const SizedBox(width: 8),
+                    TextButton.icon(
                       icon: const Icon(Icons.delete, color: Colors.red),
                       label: const Text('Delete', style: TextStyle(color: Colors.red)),
                       onPressed: () => _confirmDeleteRoute(context, route),
@@ -228,6 +234,19 @@ class RoutesManagementScreen extends StatelessWidget {
             child: const Text('Go to Map Editor'),
           ),
         ],
+      ),
+    );
+  }
+
+  void _editRoute(BuildContext context, RouteConfig route) {
+    // Load the route for editing and navigate to map editor
+    context.read<ConfigurationCubit>().startEditingRoute(route.id);
+    Navigator.pop(context); // Go back to config home, which will show map editor
+    
+    ScaffoldMessenger.of(context).showSnackBar(
+      SnackBar(
+        content: Text('Editing "${route.name}" - modify nodes on the map'),
+        duration: const Duration(seconds: 3),
       ),
     );
   }

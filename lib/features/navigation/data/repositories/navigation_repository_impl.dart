@@ -139,7 +139,19 @@ class NavigationRepositoryImpl implements NavigationRepository {
     for (final route in config.routes) {
       final nodeIds = route.nodeIds as List<String>;
       if (nodeIds.isNotEmpty && nodeIds.last == end.uid) {
-        final path = _buildPathFromNodeIds(nodeIds, nodeMap);
+        // Find start position in this route
+        final startIndex = nodeIds.indexOf(start.uid);
+        if (startIndex == -1) continue; // Start not in this route
+        
+        final pathNodeIds = nodeIds.sublist(startIndex);
+        
+        // Validate one-way restrictions for this path
+        if (!_validatePathConnections(pathNodeIds, configurableNodeMap)) {
+          debugPrint('   ❌ Route "${route.name}" blocked by one-way restriction');
+          continue;
+        }
+        
+        final path = _buildPathFromNodeIds(pathNodeIds, nodeMap);
         if (path.isNotEmpty) {
           debugPrint('✅ Using full route "${route.name}" to destination');
           return _buildNavigationRoute(path);
@@ -150,10 +162,18 @@ class NavigationRepositoryImpl implements NavigationRepository {
     // Check 3: Find any route containing the destination
     for (final route in config.routes) {
       final nodeIds = route.nodeIds as List<String>;
+      final startIndex = nodeIds.indexOf(start.uid);
       final endIndex = nodeIds.indexOf(end.uid);
 
-      if (endIndex != -1 && nodeIds.isNotEmpty) {
-        final pathNodeIds = nodeIds.sublist(0, endIndex + 1);
+      if (startIndex != -1 && endIndex != -1 && startIndex < endIndex) {
+        final pathNodeIds = nodeIds.sublist(startIndex, endIndex + 1);
+        
+        // Validate one-way restrictions for this path
+        if (!_validatePathConnections(pathNodeIds, configurableNodeMap)) {
+          debugPrint('   ❌ Route "${route.name}" blocked by one-way restriction');
+          continue;
+        }
+        
         final path = _buildPathFromNodeIds(pathNodeIds, nodeMap);
         if (path.isNotEmpty) {
           debugPrint('✅ Using route "${route.name}" (partial)');
@@ -327,6 +347,31 @@ class NavigationRepositoryImpl implements NavigationRepository {
       }
     }
     return node;
+  }
+
+  /// Validate that all connections in the path are traversable (respecting one-way restrictions).
+  bool _validatePathConnections(
+    List<String> pathNodeIds,
+    Map<String, ConfigurableNode> configurableNodeMap,
+  ) {
+    for (int i = 0; i < pathNodeIds.length - 1; i++) {
+      final fromId = pathNodeIds[i];
+      final toId = pathNodeIds[i + 1];
+      final fromNode = configurableNodeMap[fromId];
+
+      // Check if there's a direct outgoing connection
+      final hasDirectConnection = fromNode?.connections.any((c) => c.targetNodeId == toId) ?? false;
+      
+      // Check if there's an incoming bidirectional connection from the target
+      final hasIncomingBidirectional = configurableNodeMap[toId]?.connections
+          .any((c) => c.targetNodeId == fromId && c.isBidirectional) ?? false;
+
+      if (!hasDirectConnection && !hasIncomingBidirectional) {
+        debugPrint('   ❌ One-way block: $fromId → $toId');
+        return false;
+      }
+    }
+    return true;
   }
 
   /// Build path from node IDs.

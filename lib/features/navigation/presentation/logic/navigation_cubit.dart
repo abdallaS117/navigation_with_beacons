@@ -8,11 +8,51 @@ import '../../domain/repositories/navigation_repository.dart';
 import '../../domain/repositories/beacon_repository.dart';
 import 'navigation_state.dart';
 
+/// Cubit for managing indoor navigation state and route calculation.
+/// 
+/// [NavigationCubit] is the central state manager for navigation, handling:
+/// - Loading floor maps and departments
+/// - Tracking user position from beacon detection
+/// - Calculating routes to destinations
+/// - Monitoring navigation progress and arrival
+/// - Auto-switching floors during multi-floor navigation
+/// 
+/// ## Usage
+/// 
+/// ```dart
+/// // Initialize navigation system
+/// context.read<NavigationCubit>().initialize();
+/// 
+/// // Select destination and start navigation
+/// context.read<NavigationCubit>().selectDestination(department);
+/// context.read<NavigationCubit>().startNavigation();
+/// 
+/// // Listen to navigation state
+/// BlocBuilder<NavigationCubit, NavigationState>(
+///   builder: (context, state) {
+///     if (state.status == NavigationStatus.navigating) {
+///       // Show route on map
+///     } else if (state.status == NavigationStatus.arrived) {
+///       // Show arrival notification
+///     }
+///     return ...;
+///   },
+/// );
+/// ```
+/// 
+/// ## State Flow
+/// 
+/// ```
+/// initial → loading → mapLoaded → navigating → arrived
+///              ↓           ↓           ↓
+///            error       error       error
+/// ```
 class NavigationCubit extends Cubit<NavigationState> {
   final NavigationRepository _navigationRepository;
   final BeaconRepository _beaconRepository;
   StreamSubscription<BeaconNode?>? _beaconSubscription;
 
+  /// Creates a [NavigationCubit] with required repositories.
   NavigationCubit({
     required NavigationRepository navigationRepository,
     required BeaconRepository beaconRepository,
@@ -20,6 +60,10 @@ class NavigationCubit extends Cubit<NavigationState> {
         _beaconRepository = beaconRepository,
         super(const NavigationState());
 
+  /// Initializes the navigation system.
+  /// 
+  /// Loads floor maps, departments, and starts listening to beacon changes.
+  /// Must be called before any navigation operations.
   Future<void> initialize() async {
     emit(state.copyWith(status: NavigationStatus.loading));
 
@@ -46,6 +90,10 @@ class NavigationCubit extends Cubit<NavigationState> {
     }
   }
 
+  /// Handles beacon position changes from the beacon repository.
+  /// 
+  /// Updates current position, auto-switches floor during navigation,
+  /// and updates navigation progress.
   void _onBeaconChanged(BeaconNode? beacon) {
     if (beacon == null) return;
 
@@ -62,6 +110,10 @@ class NavigationCubit extends Cubit<NavigationState> {
     }
   }
 
+  /// Updates navigation progress based on current beacon position.
+  /// 
+  /// Checks if user has arrived at destination (within threshold)
+  /// and updates route progress percentage.
   void _updateNavigationProgress(BeaconNode beacon) {
     final route = state.currentRoute!;
     
@@ -113,12 +165,14 @@ class NavigationCubit extends Cubit<NavigationState> {
     }
   }
   
+  /// Calculates Euclidean distance between two points.
   double _calculateDistance(double x1, double y1, double x2, double y2) {
     final dx = x2 - x1;
     final dy = y2 - y1;
     return sqrt(dx * dx + dy * dy);
   }
 
+  /// Changes the current floor and loads its map.
   Future<void> changeFloor(int floor) async {
     try {
       final floorMap = await _navigationRepository.getFloorMap(floor);
@@ -133,10 +187,21 @@ class NavigationCubit extends Cubit<NavigationState> {
     }
   }
 
+  /// Selects a destination department for navigation.
+  /// 
+  /// Call [startNavigation] after selecting to begin route calculation.
   Future<void> selectDestination(Department department) async {
     emit(state.copyWith(selectedDestination: department));
   }
 
+  /// Starts navigation to the selected destination.
+  /// 
+  /// Requires:
+  /// - A destination selected via [selectDestination]
+  /// - Current position detected from beacon
+  /// 
+  /// On success, status changes to [NavigationStatus.navigating].
+  /// On failure (no route found), sets [errorMessage] with reason.
   Future<void> startNavigation() async {
     debugPrint('🚀 startNavigation called');
     debugPrint('   selectedDestination: ${state.selectedDestination?.name}');
@@ -207,6 +272,7 @@ class NavigationCubit extends Cubit<NavigationState> {
     }
   }
 
+  /// Cancels the current navigation and clears the route.
   void cancelNavigation() {
     // Clear active route from beacon repository
     _beaconRepository.setActiveRoute(null);
@@ -220,10 +286,12 @@ class NavigationCubit extends Cubit<NavigationState> {
     ));
   }
 
+  /// Updates the compass heading for the user arrow display.
   void updateCompassHeading(double heading) {
     emit(state.copyWith(compassHeading: heading));
   }
 
+  /// Clears the current error message.
   void clearError() {
     emit(state.copyWith(clearErrorMessage: true));
   }

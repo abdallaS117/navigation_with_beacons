@@ -4,10 +4,37 @@ import 'package:flutter/foundation.dart';
 import '../../domain/entities/beacon_node.dart';
 import '../../../configuration/domain/models/configurable_node.dart';
 
-/// Helper class for pathfinding algorithms used in navigation.
-/// Extracted from NavigationRepositoryImpl for better maintainability.
+/// Helper class for pathfinding algorithms used in indoor navigation.
+/// 
+/// Provides static methods for:
+/// - Dijkstra's algorithm with connection direction support
+/// - Proximity-based fallback routing
+/// - Distance calculations
+/// 
+/// ## One-Way Connection Handling
+/// 
+/// The pathfinding respects connection directions:
+/// - **Direct outgoing**: Connections defined FROM a node are always traversable
+/// - **Incoming bidirectional**: Connections TO a node are only traversable if marked bidirectional
+/// 
+/// Example:
+/// ```
+/// Node A ──────► Node B (one-way)
+/// 
+/// From A: Can reach B (direct outgoing)
+/// From B: Cannot reach A (incoming is NOT bidirectional)
+/// ```
 class PathfindingHelper {
-  /// Dijkstra algorithm using ConfigurableNode connections.
+  /// Finds the shortest path using Dijkstra's algorithm.
+  /// 
+  /// Respects connection directions defined in [ConfigurableNode.connections].
+  /// Returns empty list if no valid path exists.
+  /// 
+  /// Parameters:
+  /// - [start]: Starting node
+  /// - [end]: Destination node
+  /// - [allBeacons]: All available nodes for routing
+  /// - [configurableNodeMap]: Map of node IDs to their configurations
   static List<BeaconNode> dijkstraWithConfig(
     BeaconNode start,
     BeaconNode end,
@@ -73,7 +100,13 @@ class PathfindingHelper {
     return _reconstructPath(end.uid, start.uid, previous, allBeacons);
   }
 
-  /// Get valid neighbors for a node considering connection directions.
+  /// Gets valid neighbors for a node considering connection directions.
+  /// 
+  /// A neighbor is valid if:
+  /// 1. There's a direct outgoing connection from current node, OR
+  /// 2. There's an incoming connection that is bidirectional
+  /// 
+  /// This ensures one-way connections are respected during pathfinding.
   static Set<String> _getValidNeighbors(
     String currentUid,
     Map<String, ConfigurableNode> configurableNodeMap,
@@ -102,7 +135,10 @@ class PathfindingHelper {
     return validNeighborIds;
   }
 
-  /// Reconstruct path from Dijkstra results.
+  /// Reconstructs the path from Dijkstra's previous-node map.
+  /// 
+  /// Walks backwards from end to start using the previous map,
+  /// then reverses to get the correct order.
   static List<BeaconNode> _reconstructPath(
     String endUid,
     String startUid,

@@ -2,10 +2,36 @@ import 'package:flutter/foundation.dart';
 import '../../domain/entities/beacon_node.dart';
 import '../../../configuration/domain/models/configurable_node.dart';
 
-/// Helper class for checking one-way connection restrictions.
+/// Helper class for validating one-way connection restrictions.
+/// 
+/// One-way connections allow travel in only one direction. This helper
+/// checks if a route is blocked by such restrictions and provides
+/// user-friendly error messages.
+/// 
+/// ## How It Works
+/// 
+/// 1. Attempts to find ANY path from start to end following connection rules
+/// 2. If no path exists, checks if a path exists in REVERSE direction
+/// 3. If reverse path exists, the route is blocked by one-way restriction
+/// 
+/// ## Example
+/// 
+/// ```dart
+/// final error = OneWayRestrictionHelper.checkOneWayRestriction(
+///   startNode, endNode, configurableNodeMap,
+/// );
+/// if (error != null) {
+///   showDialog(message: error); // "Route is one-way in opposite direction"
+/// }
+/// ```
 class OneWayRestrictionHelper {
-  /// Check if the route from start to end is blocked by one-way restrictions.
-  /// Returns a descriptive error message if blocked, null otherwise.
+  /// Checks if navigation from [start] to [end] is blocked by one-way restrictions.
+  /// 
+  /// Returns:
+  /// - `null` if navigation is allowed
+  /// - Error message string if blocked by one-way restriction
+  /// 
+  /// The error message is user-friendly and can be displayed directly.
   static String? checkOneWayRestriction(
     BeaconNode start,
     BeaconNode end,
@@ -44,7 +70,13 @@ class OneWayRestrictionHelper {
     return null;
   }
 
-  /// Check if we can reach targetId from sourceId following connection directions.
+  /// Recursively checks if [targetId] is reachable from [sourceId].
+  /// 
+  /// Follows connection direction rules:
+  /// - Direct outgoing connections are always traversable
+  /// - Incoming connections are only traversable if bidirectional
+  /// 
+  /// Uses [visited] set to prevent infinite loops in cyclic graphs.
   static bool _canReachNode(
     String sourceId,
     String targetId,
