@@ -254,6 +254,7 @@ class NodeConnection extends Equatable {
 /// - [staff]: Staff-only access (restricted areas)
 /// - [stairs]: Staircase connection (floor transition)
 /// - [elevator]: Elevator connection (floor transition)
+/// - [blocked]: Blocked route - no passage allowed (displayed in red)
 enum ConnectionType {
   /// Standard corridor - accessible to everyone
   normal,
@@ -269,4 +270,7 @@ enum ConnectionType {
   
   /// Elevator connection for floor transitions
   elevator,
+  
+  /// Blocked route - no passage allowed (prevents pathfinding)
+  blocked,
 }

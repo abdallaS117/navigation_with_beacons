@@ -43,11 +43,18 @@ class PathfindingHelper {
   ) {
     _logConnectionMap(configurableNodeMap);
 
+    // Build a map for quick beacon lookup
+    final beaconMap = <String, BeaconNode>{};
+    for (final beacon in allBeacons) {
+      beaconMap[beacon.uid] = beacon;
+    }
+
     final Map<String, double> distances = {};
     final Map<String, String?> previous = {};
     final Set<String> visited = {};
     final PriorityQueue<_NodeDistance> queue = PriorityQueue((a, b) => a.distance.compareTo(b.distance));
 
+    // Initialize all distances to infinity
     for (final beacon in allBeacons) {
       distances[beacon.uid] = double.infinity;
       previous[beacon.uid] = null;
@@ -55,28 +62,39 @@ class PathfindingHelper {
     distances[start.uid] = 0;
     queue.add(_NodeDistance(start.uid, 0));
 
+    debugPrint('🚀 Starting Dijkstra from ${start.name} (${start.uid}) to ${end.name} (${end.uid})');
+
     while (queue.isNotEmpty) {
       final current = queue.removeFirst();
 
+      // Skip if already visited (we may have added duplicates with better distances)
       if (visited.contains(current.uid)) continue;
       visited.add(current.uid);
 
-      if (current.uid == end.uid) break;
+      debugPrint('📍 Visiting: ${beaconMap[current.uid]?.name ?? current.uid}, distance: ${current.distance}');
 
-      final currentNode = allBeacons.firstWhereOrNull((b) => b.uid == current.uid);
+      // Early termination if we reached the destination
+      if (current.uid == end.uid) {
+        debugPrint('🎯 Reached destination!');
+        break;
+      }
+
+      final currentNode = beaconMap[current.uid];
       if (currentNode == null) continue;
 
       final configurableNode = configurableNodeMap[current.uid];
-      debugPrint('🔍 Processing node: ${configurableNode?.name ?? current.uid}');
 
+      // Get all valid neighbors (respecting connection directions)
       final validNeighborIds = _getValidNeighbors(current.uid, configurableNodeMap);
+      debugPrint('   Valid neighbors: $validNeighborIds');
 
       for (final neighborUid in validNeighborIds) {
         if (visited.contains(neighborUid)) continue;
 
-        final neighbor = allBeacons.firstWhereOrNull((b) => b.uid == neighborUid);
+        final neighbor = beaconMap[neighborUid];
         if (neighbor == null) continue;
 
+        // Check floor transition validity
         if (currentNode.floor != neighbor.floor) {
           final connection = configurableNode?.connections.firstWhereOrNull((c) => c.targetNodeId == neighborUid);
           final isValidTransition = connection?.type == ConnectionType.stairs ||
@@ -86,18 +104,27 @@ class PathfindingHelper {
           if (!isValidTransition) continue;
         }
 
+        // Calculate distance using Euclidean distance
         final distance = calculateDistance(currentNode, neighbor);
         final newDist = distances[current.uid]! + distance;
 
+        debugPrint('   Checking neighbor: ${neighbor.name} (${neighborUid}), edge distance: $distance, total: $newDist, current best: ${distances[neighborUid]}');
+
+        // Relaxation step: update if we found a shorter path
         if (newDist < distances[neighborUid]!) {
           distances[neighborUid] = newDist;
           previous[neighborUid] = current.uid;
           queue.add(_NodeDistance(neighborUid, newDist));
+          debugPrint('   ✅ Updated distance to ${neighbor.name}: $newDist');
         }
       }
     }
 
-    return _reconstructPath(end.uid, start.uid, previous, allBeacons);
+    final path = _reconstructPath(end.uid, start.uid, previous, allBeacons);
+    debugPrint('📊 Final path: ${path.map((n) => n.name).join(' → ')}');
+    debugPrint('📊 Final distances: ${path.map((n) => distances[n.uid]).join(' → ')}');
+    
+    return path;
   }
 
   /// Gets valid neighbors for a node considering connection directions.
@@ -114,17 +141,22 @@ class PathfindingHelper {
     final validNeighborIds = <String>{};
     final configurableNode = configurableNodeMap[currentUid];
 
-    // Direct outgoing connections
+    // Direct outgoing connections (skip blocked connections)
     final directConnections = configurableNode?.connections ?? [];
     for (final conn in directConnections) {
+      if (conn.type == ConnectionType.blocked) {
+        debugPrint('   ✖ Blocked connection: $currentUid → ${conn.targetNodeId}');
+        continue;
+      }
       validNeighborIds.add(conn.targetNodeId);
       debugPrint('   → Direct outgoing: $currentUid → ${conn.targetNodeId} (bidirectional: ${conn.isBidirectional})');
     }
 
-    // Incoming bidirectional connections
+    // Incoming bidirectional connections (skip blocked connections)
     for (final otherNode in configurableNodeMap.values) {
       if (otherNode.id == currentUid) continue;
       for (final conn in otherNode.connections) {
+        if (conn.type == ConnectionType.blocked) continue;
         if (conn.targetNodeId == currentUid && conn.isBidirectional) {
           validNeighborIds.add(otherNode.id);
           debugPrint('   ← Incoming bidirectional: ${otherNode.id} ↔ $currentUid');

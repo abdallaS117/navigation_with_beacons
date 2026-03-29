@@ -129,6 +129,8 @@ class _ConnectionDialogState extends State<ConnectionDialog> {
         return Icons.badge;
       case ConnectionType.normal:
         return Icons.arrow_forward;
+      case ConnectionType.blocked:
+        return Icons.block;
     }
   }
 

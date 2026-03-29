@@ -31,7 +31,11 @@ class _ConnectionConfigDialogState extends State<ConnectionConfigDialog> {
   @override
   void initState() {
     super.initState();
-    _direction = widget.currentConnection.isBidirectional ? 'two-way' : 'one-way-forward';
+    if (widget.currentConnection.type == ConnectionType.blocked) {
+      _direction = 'blocked';
+    } else {
+      _direction = widget.currentConnection.isBidirectional ? 'two-way' : 'one-way-forward';
+    }
     _type = widget.currentConnection.type;
   }
 
@@ -70,8 +74,8 @@ class _ConnectionConfigDialogState extends State<ConnectionConfigDialog> {
               Colors.orange,
             ),
             _buildDirectionOption(
-              'delete',
-              'No connection (Delete)',
+              'blocked',
+              'Blocked (No passage)',
               Icons.block,
               Colors.red,
             ),

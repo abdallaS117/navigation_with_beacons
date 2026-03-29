@@ -64,22 +64,47 @@ class NavigationRepositoryImpl implements NavigationRepository {
       debugPrint('📌 Added end node to nodeMap: ${end.uid}');
     }
 
-    // FIRST: Try to find a pre-configured route
-    final preConfiguredRoute = _tryPreConfiguredRoutes(start, end, config, nodeMap, configurableNodeMap);
-    if (preConfiguredRoute != null) {
-      return preConfiguredRoute;
-    }
-
-    debugPrint('⚠️ No pre-configured route found, trying dynamic pathfinding...');
-
-    // SECOND: Dynamic pathfinding
+    // Calculate routes using both methods and choose the shortest
     final requiresFloorChange = start.floor != end.floor;
 
+    // Get Dijkstra's shortest path first
+    NavigationRoute? dijkstraRoute;
     if (requiresFloorChange) {
-      return _calculateMultiFloorRoute(start, end, config, nodeMap, configurableNodeMap);
+      dijkstraRoute = await _calculateMultiFloorRoute(start, end, config, nodeMap, configurableNodeMap);
+    } else {
+      dijkstraRoute = _calculateSameFloorRoute(start, end, nodeMap, configurableNodeMap);
     }
 
-    return _calculateSameFloorRoute(start, end, nodeMap, configurableNodeMap);
+    // Get pre-configured route if available
+    final preConfiguredRoute = _tryPreConfiguredRoutes(start, end, config, nodeMap, configurableNodeMap);
+
+    // Choose the shorter route
+    if (preConfiguredRoute != null && dijkstraRoute.nodes.isNotEmpty) {
+      debugPrint('📏 Comparing routes:');
+      debugPrint('   Pre-configured: ${preConfiguredRoute.totalDistance} (${preConfiguredRoute.nodes.length} nodes)');
+      debugPrint('   Dijkstra: ${dijkstraRoute.totalDistance} (${dijkstraRoute.nodes.length} nodes)');
+      
+      if (preConfiguredRoute.totalDistance <= dijkstraRoute.totalDistance) {
+        debugPrint('✅ Using pre-configured route (shorter or equal)');
+        return preConfiguredRoute;
+      } else {
+        debugPrint('✅ Using Dijkstra route (shorter)');
+        return dijkstraRoute;
+      }
+    } else if (preConfiguredRoute != null) {
+      debugPrint('✅ Using pre-configured route (no Dijkstra path found)');
+      return preConfiguredRoute;
+    } else if (dijkstraRoute.nodes.isNotEmpty) {
+      debugPrint('✅ Using Dijkstra route (no pre-configured route found)');
+      return dijkstraRoute;
+    }
+
+    return const NavigationRoute(
+      nodes: [],
+      totalDistance: 0,
+      estimatedTimeSeconds: 0,
+      instructions: ['No route found.'],
+    );
   }
 
   /// Try to find a pre-configured route containing both start and end nodes.
@@ -104,24 +129,19 @@ class NavigationRepositoryImpl implements NavigationRepository {
 
         if (startIndex < endIndex) {
           pathNodeIds = nodeIds.sublist(startIndex, endIndex + 1);
+          
+          // Validate forward traversal for blocked connections
+          if (!_validatePathConnections(pathNodeIds, configurableNodeMap)) {
+            debugPrint('   ❌ Path blocked: forward traversal');
+            isValidPath = false;
+          }
         } else {
           pathNodeIds = nodeIds.sublist(endIndex, startIndex + 1).reversed.toList();
 
-          // Validate reverse traversal
-          for (int i = 0; i < pathNodeIds.length - 1; i++) {
-            final fromId = pathNodeIds[i];
-            final toId = pathNodeIds[i + 1];
-            final fromNode = configurableNodeMap[fromId];
-
-            final hasDirectConnection = fromNode?.connections.any((c) => c.targetNodeId == toId) ?? false;
-            final hasIncomingBidirectional = configurableNodeMap[toId]?.connections
-                .any((c) => c.targetNodeId == fromId && c.isBidirectional) ?? false;
-
-            if (!hasDirectConnection && !hasIncomingBidirectional) {
-              debugPrint('   ❌ Cannot traverse reverse: $fromId → $toId');
-              isValidPath = false;
-              break;
-            }
+          // Validate reverse traversal (includes blocked check)
+          if (!_validatePathConnections(pathNodeIds, configurableNodeMap)) {
+            debugPrint('   ❌ Cannot traverse reverse: path blocked');
+            isValidPath = false;
           }
         }
 
@@ -349,7 +369,7 @@ class NavigationRepositoryImpl implements NavigationRepository {
     return node;
   }
 
-  /// Validate that all connections in the path are traversable (respecting one-way restrictions).
+  /// Validate that all connections in the path are traversable (respecting one-way and blocked restrictions).
   bool _validatePathConnections(
     List<String> pathNodeIds,
     Map<String, ConfigurableNode> configurableNodeMap,
@@ -359,15 +379,24 @@ class NavigationRepositoryImpl implements NavigationRepository {
       final toId = pathNodeIds[i + 1];
       final fromNode = configurableNodeMap[fromId];
 
-      // Check if there's a direct outgoing connection
-      final hasDirectConnection = fromNode?.connections.any((c) => c.targetNodeId == toId) ?? false;
+      // Check if there's a direct outgoing connection (not blocked)
+      final directConnection = fromNode?.connections.firstWhere(
+        (c) => c.targetNodeId == toId,
+        orElse: () => const NodeConnection(targetNodeId: ''),
+      );
+      final hasDirectConnection = directConnection?.targetNodeId == toId && 
+          directConnection?.type != ConnectionType.blocked;
       
-      // Check if there's an incoming bidirectional connection from the target
-      final hasIncomingBidirectional = configurableNodeMap[toId]?.connections
-          .any((c) => c.targetNodeId == fromId && c.isBidirectional) ?? false;
+      // Check if there's an incoming bidirectional connection from the target (not blocked)
+      final incomingConnection = configurableNodeMap[toId]?.connections.firstWhere(
+        (c) => c.targetNodeId == fromId && c.isBidirectional,
+        orElse: () => const NodeConnection(targetNodeId: ''),
+      );
+      final hasIncomingBidirectional = incomingConnection?.targetNodeId == fromId && 
+          incomingConnection?.type != ConnectionType.blocked;
 
       if (!hasDirectConnection && !hasIncomingBidirectional) {
-        debugPrint('   ❌ One-way block: $fromId → $toId');
+        debugPrint('   ❌ Connection blocked or one-way: $fromId → $toId');
         return false;
       }
     }

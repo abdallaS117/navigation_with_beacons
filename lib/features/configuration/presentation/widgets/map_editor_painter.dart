@@ -77,6 +77,16 @@ class MapEditorPainter extends CustomPainter {
       ..color = Colors.orange
       ..style = PaintingStyle.fill;
 
+    final blockedPaint = Paint()
+      ..color = Colors.red.withOpacity(0.7)
+      ..strokeWidth = 3
+      ..style = PaintingStyle.stroke;
+
+    final blockedSelectedPaint = Paint()
+      ..color = Colors.red
+      ..strokeWidth = 4
+      ..style = PaintingStyle.stroke;
+
     for (final node in nodes) {
       for (final connection in node.connections) {
         final targetNode = nodes.cast<ConfigurableNode?>().firstWhere(
@@ -87,19 +97,33 @@ class MapEditorPainter extends CustomPainter {
         if (targetNode != null) {
           final isSelected = node.id == selectedNodeId || targetNode.id == selectedNodeId;
           final isOneWay = !connection.isBidirectional;
+          final isBlocked = connection.type == ConnectionType.blocked;
 
           final startX = node.x / scaleX;
           final startY = node.y / scaleY;
           final endX = targetNode.x / scaleX;
           final endY = targetNode.y / scaleY;
 
+          Paint linePaint;
+          if (isBlocked) {
+            linePaint = isSelected ? blockedSelectedPaint : blockedPaint;
+          } else if (isSelected) {
+            linePaint = selectedPaint;
+          } else if (isOneWay) {
+            linePaint = oneWayPaint;
+          } else {
+            linePaint = paint;
+          }
+
           canvas.drawLine(
             Offset(startX, startY),
             Offset(endX, endY),
-            isSelected ? selectedPaint : (isOneWay ? oneWayPaint : paint),
+            linePaint,
           );
 
-          if (isOneWay) {
+          if (isBlocked) {
+            _drawBlockedIndicator(canvas, startX, startY, endX, endY);
+          } else if (isOneWay) {
             _drawDirectionArrow(canvas, startX, startY, endX, endY, arrowPaint);
           }
         }
@@ -134,6 +158,29 @@ class MapEditorPainter extends CustomPainter {
     );
     arrowPath.close();
     canvas.drawPath(arrowPath, paint);
+  }
+
+  void _drawBlockedIndicator(
+    Canvas canvas,
+    double startX,
+    double startY,
+    double endX,
+    double endY,
+  ) {
+    final midX = (startX + endX) / 2;
+    final midY = (startY + endY) / 2;
+
+    final blockedIconPaint = Paint()
+      ..color = Colors.red
+      ..strokeWidth = 2
+      ..style = PaintingStyle.stroke;
+
+    canvas.drawCircle(Offset(midX, midY), 8, blockedIconPaint);
+    canvas.drawLine(
+      Offset(midX - 5, midY - 5),
+      Offset(midX + 5, midY + 5),
+      blockedIconPaint,
+    );
   }
 
   void _drawRouteInProgress(Canvas canvas) {

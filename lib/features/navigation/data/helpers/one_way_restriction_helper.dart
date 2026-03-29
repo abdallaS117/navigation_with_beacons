@@ -91,16 +91,18 @@ class OneWayRestrictionHelper {
     final sourceNode = configurableNodeMap[sourceId];
     if (sourceNode == null) return false;
 
-    // Check direct outgoing connections
+    // Check direct outgoing connections (skip blocked)
     for (final connection in sourceNode.connections) {
+      if (connection.type == ConnectionType.blocked) continue;
       if (_canReachNode(connection.targetNodeId, targetId, configurableNodeMap, visited)) {
         return true;
       }
     }
 
-    // Check incoming bidirectional connections
+    // Check incoming bidirectional connections (skip blocked)
     for (final node in configurableNodeMap.values) {
       for (final conn in node.connections) {
+        if (conn.type == ConnectionType.blocked) continue;
         if (conn.targetNodeId == sourceId && conn.isBidirectional) {
           if (_canReachNode(node.id, targetId, configurableNodeMap, visited)) {
             return true;

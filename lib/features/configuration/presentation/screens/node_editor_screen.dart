@@ -262,6 +262,8 @@ class NodeEditorScreen extends StatelessWidget {
         return Icons.badge;
       case ConnectionType.normal:
         return Icons.arrow_forward;
+      case ConnectionType.blocked:
+        return Icons.block;
     }
   }
 }

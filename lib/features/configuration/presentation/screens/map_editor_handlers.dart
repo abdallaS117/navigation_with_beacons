@@ -92,11 +92,8 @@ mixin MapEditorHandlers {
         toNodeId: toNodeId,
         currentConnection: connection,
         onSave: (direction, type) {
-          if (direction == 'delete') {
-            context.read<ConfigurationCubit>().removeConnection(fromNodeId, toNodeId);
-            ScaffoldMessenger.of(context).showSnackBar(
-              const SnackBar(content: Text('Connection deleted')),
-            );
+          if (direction == 'blocked') {
+            updateConnection(context, fromNodeId, toNodeId, 'two-way', ConnectionType.blocked);
           } else {
             updateConnection(context, fromNodeId, toNodeId, direction, type);
           }
